@@ -1,0 +1,44 @@
+#define IDI_APPICON 101
+#include <winver.h>
+#include "obj/version.h"
+
+IDI_APPICON ICON "assets/app.ico"
+1 RT_MANIFEST "obj/app.manifest"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION APP_VERSION_COMMA
+ PRODUCTVERSION APP_VERSION_COMMA
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404B0"
+        BEGIN
+            VALUE "CompanyName", "HDR SDR Brightness"
+            VALUE "FileDescription", "HDR SDR 亮度助手"
+            VALUE "FileVersion", APP_VERSION
+            VALUE "InternalName", "HdrSdrBrightness"
+            VALUE "OriginalFilename", "HdrSdrBrightness.exe"
+            VALUE "ProductName", "HDR SDR 亮度助手"
+            VALUE "ProductVersion", APP_VERSION
+        END
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "HDR SDR Brightness"
+            VALUE "FileDescription", "HDR SDR Brightness"
+            VALUE "FileVersion", APP_VERSION
+            VALUE "InternalName", "HdrSdrBrightness"
+            VALUE "OriginalFilename", "HdrSdrBrightness.exe"
+            VALUE "ProductName", "HDR SDR Brightness"
+            VALUE "ProductVersion", APP_VERSION
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0804, 1200, 0x0409, 1200
+    END
+END
