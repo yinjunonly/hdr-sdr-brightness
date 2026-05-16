@@ -122,6 +122,8 @@ SDR white level
 
 ## 中文
 
+![1778953360969](image/README/1778953360969.png)
+
 一个极简 Windows 托盘工具，用来在开启 HDR 时自动调整 **Windows SDR 内容亮度**。
 
 适用于 OLED、QD-OLED、MiniLED、HDR 显示器、HDR 电视和支持 HDR 的笔记本屏幕，用来缓解开启 Windows HDR 后 SDR 应用过亮、过暗或发灰的问题。
