@@ -495,6 +495,10 @@ const wchar_t* T(TextId id) {
     return ShouldUseChineseUi() ? kTextZh[id] : kTextEn[id];
 }
 
+void UpdateSettingsWindowTitle(HWND hwnd) {
+    if (hwnd) SetWindowTextW(hwnd, T(TxtSettingsTitle));
+}
+
 std::wstring PercentLabel(int value);
 
 std::wstring GetExePath() {
@@ -1686,7 +1690,13 @@ void ApplySettingsFromWindow(HWND hwnd, bool closeWindow) {
     g_config = next;
     SaveConfig();
     PostMessageW(g_mainWindow, kApplyMessage, TRUE, 0);
-    if (closeWindow) DestroyWindow(hwnd);
+    if (closeWindow) {
+        DestroyWindow(hwnd);
+    } else {
+        UpdateSettingsWindowTitle(hwnd);
+        InvalidateRect(hwnd, NULL, FALSE);
+        UpdateTrayTip();
+    }
 }
 
 void CenterWindow(HWND hwnd, int width, int height) {
@@ -2234,6 +2244,7 @@ void ApplySettingsDraft(HWND hwnd, bool closeWindow) {
     if (closeWindow) {
         DestroyWindow(hwnd);
     } else {
+        UpdateSettingsWindowTitle(hwnd);
         InvalidateRect(hwnd, NULL, FALSE);
         UpdateTrayTip();
     }
@@ -2260,6 +2271,7 @@ void HandleSettingsClick(HWND hwnd, POINT pt) {
         g_settingsDraft.language = segment;
         CleanupFontResources();
         EnsureUiResources();
+        UpdateSettingsWindowTitle(hwnd);
         InvalidateRect(hwnd, NULL, FALSE);
         return;
     }
@@ -2354,6 +2366,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         g_settingsDraftActive = true;
         g_hoverControl = HoverNone;
         g_trackingSettingsMouse = false;
+        UpdateSettingsWindowTitle(hwnd);
         ApplyModernWindowFrame(hwnd);
         SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(LoadIconW(g_instance, MAKEINTRESOURCEW(IDI_APPICON))));
         SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(LoadIconW(g_instance, MAKEINTRESOURCEW(IDI_APPICON))));
@@ -2453,6 +2466,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         ReloadUiTheme();
         EnsureUiResources();
         ApplyModernWindowFrame(hwnd);
+        UpdateSettingsWindowTitle(hwnd);
         InvalidateRect(hwnd, NULL, TRUE);
         return 0;
     case WM_CLOSE:
@@ -2472,6 +2486,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
 
 void ShowSettingsWindow(HWND owner) {
     if (g_settingsWindow) {
+        UpdateSettingsWindowTitle(g_settingsWindow);
         ShowWindow(g_settingsWindow, SW_SHOWNORMAL);
         ApplyModernWindowFrame(g_settingsWindow);
         InvalidateRect(g_settingsWindow, NULL, TRUE);
