@@ -43,6 +43,19 @@ Tray menu:
 - Manual-change restore can be disabled in Settings
 - Clicking the restore notification opens a detail dialog
 
+### Performance
+
+![Performance snapshot](image/README/performance-1.0.2.png)
+
+Idle tray-mode sample on one Windows machine over 45 seconds:
+
+- Average CPU: `0.003%`
+- Peak CPU: `0.129%`
+- Working set: `23.0 MB`
+- Private memory: `7.4 MB`
+
+Actual values may vary by display count, HDR state, Windows build, and hardware.
+
 ### UI And Icon
 
 - English and Chinese UI with automatic language detection
@@ -162,6 +175,19 @@ SDR white level
 - 调高或调低都会平滑渐变
 - 可以在设置中关闭“自动纠正手动调整”
 - 点击恢复通知会打开详情弹框
+
+### 性能占用
+
+![性能快照](image/README/performance-1.0.2.png)
+
+在一台 Windows 机器上以托盘空闲状态采样 45 秒：
+
+- 平均 CPU：`0.003%`
+- 峰值 CPU：`0.129%`
+- 工作集内存：`23.0 MB`
+- 私有内存：`7.4 MB`
+
+实际占用会随显示器数量、HDR 状态、Windows 版本和硬件有所变化。
 
 ### 界面与图标
 

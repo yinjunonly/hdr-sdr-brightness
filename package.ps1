@@ -43,6 +43,10 @@ New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
 Copy-Item -LiteralPath $exe -Destination $packageRoot
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $packageRoot
 Copy-Item -LiteralPath (Join-Path $root 'README.md') -Destination $packageRoot
+$imageDir = Join-Path $root 'image'
+if (Test-Path -LiteralPath $imageDir) {
+    Copy-Item -LiteralPath $imageDir -Destination $packageRoot -Recurse
+}
 
 Compress-Archive -Path (Join-Path $packageRoot '*') -DestinationPath $zip -CompressionLevel Optimal
 Remove-Item -LiteralPath $packageRoot -Recurse -Force
