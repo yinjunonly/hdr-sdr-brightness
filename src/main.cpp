@@ -1419,6 +1419,35 @@ void ApplyCurrentBrightness(bool force) {
     UpdateTrayTip();
 }
 
+bool IsCachedStatusText(TextId id) {
+    return g_status == kTextEn[id] || g_status == kTextZh[id];
+}
+
+void RefreshStatusTextForCurrentLanguage() {
+    if (g_status.empty() || IsCachedStatusText(TxtStarting)) {
+        g_status = T(TxtStarting);
+        return;
+    }
+
+    if (IsCachedStatusText(TxtManualRestoreOff)) {
+        g_status = T(TxtManualRestoreOff);
+        return;
+    }
+
+    if (g_transitionActive && g_transitionTargetBrightness >= 0) {
+        std::wstringstream ss;
+        ss << (ShouldUseChineseUi() ? L"SDR 内容亮度恢复中" : L"Restoring SDR content brightness") << L" "
+           << PercentLabel(g_transitionTargetBrightness);
+        g_status = ss.str();
+        return;
+    }
+
+    NightDecision decision = DecideNight();
+    int brightness = decision.night ? g_config.nightBrightness : g_config.dayBrightness;
+    ApplyResult check = CheckSdrBrightness(brightness);
+    g_status = BuildStatusText(decision, brightness, check);
+}
+
 void AddTrayIcon(HWND hwnd) {
     ZeroMemory(&g_tray, sizeof(g_tray));
     g_tray.cbSize = sizeof(g_tray);
@@ -1659,6 +1688,7 @@ void ShowTrayMenu(HWND hwnd) {
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
 
+    RefreshStatusTextForCurrentLanguage();
     std::wstring status = g_status.empty() ? T(TxtStarting) : g_status;
     AppendMenuText(menu, MF_STRING | MF_DISABLED, 0, status);
     AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
