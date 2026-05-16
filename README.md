@@ -4,6 +4,8 @@
 
 ## English
 
+![1778953908860](image/README/1778953908860.png)
+
 A minimal Windows tray utility that automatically adjusts **Windows SDR content brightness** while HDR is enabled.
 
 It is useful for OLED, QD-OLED, MiniLED, HDR monitors, HDR TVs, and HDR-capable laptop displays where SDR apps become too bright, too dim, or washed out after enabling Windows HDR.
