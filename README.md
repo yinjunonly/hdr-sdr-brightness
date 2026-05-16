@@ -8,6 +8,26 @@ A minimal Windows tray utility that automatically adjusts **Windows SDR content 
 
 It is useful for OLED, QD-OLED, MiniLED, HDR monitors, HDR TVs, and HDR-capable laptop displays where SDR apps become too bright, too dim, or washed out after enabling Windows HDR.
 
+### Download
+
+Download the latest release from [GitHub Releases](https://github.com/yinjunonly/hdr-sdr-brightness/releases/latest).
+
+Use the `HdrSdrBrightness-1.0.0-win64.zip` package, extract it, and run `HdrSdrBrightness.exe`.
+
+### Use
+
+Run `HdrSdrBrightness.exe`; the settings window opens and the app also stays in the system tray.
+
+Use `HdrSdrBrightness.exe --background` for a quiet tray-only launch. Start with Windows uses this mode.
+
+Tray menu:
+
+- Apply now
+- Settings: language, SDR content brightness, fallback schedule, startup
+- Start with Windows
+- Open Display settings
+- Exit
+
 ### Default Behavior
 
 - Night SDR content brightness: `10`
@@ -20,52 +40,6 @@ It is useful for OLED, QD-OLED, MiniLED, HDR monitors, HDR TVs, and HDR-capable 
 - Applies brightness changes gradually in both directions
 - Manual-change restore can be disabled in Settings
 - Clicking the restore notification opens a detail dialog
-
-### Build
-
-Requires MinGW `g++` and `windres`.
-
-The project version is stored in `VERSION`. The current version is `1.0.0`.
-
-```powershell
-.\build.ps1
-```
-
-Output:
-
-```text
-bin\HdrSdrBrightness.exe
-```
-
-Build artifacts are generated under `bin\` and `obj\` and are intentionally ignored by Git.
-
-To create a GitHub Release archive:
-
-```powershell
-.\package.ps1
-```
-
-Output:
-
-```text
-dist\HdrSdrBrightness-1.0.0-win64.zip
-```
-
-The archive contains only the executable, license, and readme files.
-
-### Use
-
-Run `bin\HdrSdrBrightness.exe`; the settings window opens and the app also stays in the system tray.
-
-Use `bin\HdrSdrBrightness.exe --background` for a quiet tray-only launch. Start with Windows uses this mode.
-
-Tray menu:
-
-- Apply now
-- Settings: language, SDR content brightness, fallback schedule, startup
-- Start with Windows
-- Open Display settings
-- Exit
 
 ### UI And Icon
 
@@ -95,6 +69,22 @@ HKCU\Software\Microsoft\Windows\CurrentVersion\Run\HdrSdrBrightness
 Old `HdrSdrSync` and `OledHdrSdrSync` startup entries are migrated when settings are saved.
 
 No administrator privileges are required.
+
+### Development Build
+
+End users should download the release package instead of building locally.
+
+Building from source requires MinGW `g++` and `windres`.
+
+```powershell
+.\build.ps1
+```
+
+The project version is stored in `VERSION`. Release archives are created with:
+
+```powershell
+.\package.ps1
+```
 
 ### License
 
@@ -140,6 +130,26 @@ SDR white level
 
 适用于 OLED、QD-OLED、MiniLED、HDR 显示器、HDR 电视和支持 HDR 的笔记本屏幕，用来缓解开启 Windows HDR 后 SDR 应用过亮、过暗或发灰的问题。
 
+### 下载
+
+请从 [GitHub Releases](https://github.com/yinjunonly/hdr-sdr-brightness/releases/latest) 下载最新版。
+
+下载 `HdrSdrBrightness-1.0.0-win64.zip`，解压后运行 `HdrSdrBrightness.exe`。
+
+### 使用
+
+运行 `HdrSdrBrightness.exe` 会打开设置页，同时程序也会留在系统托盘。
+
+如需安静地只进托盘，可使用 `HdrSdrBrightness.exe --background`；开机自启会使用这个模式。
+
+托盘菜单：
+
+- 立即应用
+- 设置：语言、SDR 内容亮度、默认时段、开机自启
+- 开机自启
+- 打开显示设置
+- 退出
+
 ### 默认行为
 
 - 夜间 SDR 内容亮度：`10`
@@ -152,52 +162,6 @@ SDR white level
 - 调高或调低都会平滑渐变
 - 可以在设置中关闭“自动纠正手动调整”
 - 点击恢复通知会打开详情弹框
-
-### 构建
-
-需要 Windows 上的 MinGW `g++` 和 `windres`。
-
-项目版本号存放在 `VERSION`。当前版本是 `1.0.0`。
-
-```powershell
-.\build.ps1
-```
-
-输出文件：
-
-```text
-bin\HdrSdrBrightness.exe
-```
-
-构建产物会生成到 `bin\` 和 `obj\` 目录，这些目录不会提交到 Git。
-
-生成 GitHub Release 用的压缩包：
-
-```powershell
-.\package.ps1
-```
-
-输出文件：
-
-```text
-dist\HdrSdrBrightness-1.0.0-win64.zip
-```
-
-压缩包只包含可执行文件、许可证和说明文档。
-
-### 使用
-
-运行 `bin\HdrSdrBrightness.exe` 会打开设置页，同时程序也会留在系统托盘。
-
-如需安静地只进托盘，可使用 `bin\HdrSdrBrightness.exe --background`；开机自启会使用这个模式。
-
-托盘菜单：
-
-- 立即应用
-- 设置：语言、SDR 内容亮度、默认时段、开机自启
-- 开机自启
-- 打开显示设置
-- 退出
 
 ### 界面与图标
 
@@ -227,6 +191,22 @@ HKCU\Software\Microsoft\Windows\CurrentVersion\Run\HdrSdrBrightness
 旧的 `HdrSdrSync` / `OledHdrSdrSync` 开机自启项会在保存设置时自动迁移。
 
 不需要管理员权限。
+
+### 开发构建
+
+普通用户请优先下载 Release 包，不需要自己构建。
+
+从源码构建需要 Windows 上的 MinGW `g++` 和 `windres`。
+
+```powershell
+.\build.ps1
+```
+
+项目版本号存放在 `VERSION`。生成 Release 压缩包使用：
+
+```powershell
+.\package.ps1
+```
 
 ### 开源许可
 
