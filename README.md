@@ -58,15 +58,11 @@ Configuration is stored under the current user:
 HKCU\Software\OledHdrSdrSync
 ```
 
-The old configuration path is kept for compatibility.
-
 Start with Windows uses:
 
 ```text
 HKCU\Software\Microsoft\Windows\CurrentVersion\Run\HdrSdrBrightness
 ```
-
-Old `HdrSdrSync` and `OledHdrSdrSync` startup entries are migrated when settings are saved.
 
 No administrator privileges are required.
 
@@ -180,15 +176,11 @@ SDR white level
 HKCU\Software\OledHdrSdrSync
 ```
 
-为了兼容旧版本，配置路径暂时保留旧名称。
-
 开机自启使用：
 
 ```text
 HKCU\Software\Microsoft\Windows\CurrentVersion\Run\HdrSdrBrightness
 ```
-
-旧的 `HdrSdrSync` / `OledHdrSdrSync` 开机自启项会在保存设置时自动迁移。
 
 不需要管理员权限。
 
