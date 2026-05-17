@@ -32,6 +32,7 @@ const wchar_t kDisplayName[] = L"HDR SDR Brightness";
 const wchar_t kConfigKey[] = L"Software\\OledHdrSdrSync";
 const wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const wchar_t kStartupTaskName[] = L"HdrSdrBrightness";
+const wchar_t kStoreStartupTaskId[] = L"HdrSdrBrightnessStartup";
 const int IDI_APPICON = 101;
 
 const UINT kTrayMessage = WM_APP + 1;
@@ -565,6 +566,26 @@ std::wstring AppVersionLabel() {
     return std::wstring(L"v") + APP_VERSION_W;
 }
 
+bool IsStoreBuild() {
+#ifdef HSB_STORE_BUILD
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool IsSupportFeatureAvailable() {
+    return !IsStoreBuild();
+}
+
+bool IsStartupFeatureAvailable() {
+    return true;
+}
+
+bool UseStoreStartupIntegration() {
+    return IsStoreBuild();
+}
+
 std::wstring GetExePath() {
     std::vector<wchar_t> path(MAX_PATH);
     DWORD length = 0;
@@ -794,7 +815,7 @@ bool IsValidSupporterCode(const std::wstring& value) {
 }
 
 bool HasSupporterBadge() {
-    return IsValidSupporterCode(g_config.supporterCode);
+    return IsSupportFeatureAvailable() && IsValidSupporterCode(g_config.supporterCode);
 }
 
 int SupportButtonWidth(HDC dc) {
@@ -836,7 +857,307 @@ bool ReadBinaryValue(HKEY root, const wchar_t* keyPath, const wchar_t* valueName
     return true;
 }
 
+enum StoreStartupTaskState {
+    StoreStartupTaskDisabled = 0,
+    StoreStartupTaskDisabledByUser = 1,
+    StoreStartupTaskEnabled = 2,
+    StoreStartupTaskDisabledByPolicy = 3,
+    StoreStartupTaskEnabledByPolicy = 4
+};
+
+enum StoreAsyncStatus {
+    StoreAsyncStarted = 0,
+    StoreAsyncCompleted = 1,
+    StoreAsyncCanceled = 2,
+    StoreAsyncError = 3
+};
+
+typedef void* StoreHString;
+typedef int StoreTrustLevel;
+typedef HRESULT(WINAPI* RoInitializeFn)(int);
+typedef void(WINAPI* RoUninitializeFn)();
+typedef HRESULT(WINAPI* RoGetActivationFactoryFn)(StoreHString, REFIID, void**);
+typedef HRESULT(WINAPI* WindowsCreateStringFn)(PCWSTR, UINT32, StoreHString*);
+typedef HRESULT(WINAPI* WindowsDeleteStringFn)(StoreHString);
+
+struct StoreIStartupTask;
+struct StoreIStartupTaskStatics;
+struct StoreIAsyncInfo;
+struct StoreIAsyncOperationStartupTask;
+struct StoreIAsyncOperationStartupTaskState;
+
+struct StoreIStartupTaskVtbl {
+    HRESULT(STDMETHODCALLTYPE* QueryInterface)(StoreIStartupTask*, REFIID, void**);
+    ULONG(STDMETHODCALLTYPE* AddRef)(StoreIStartupTask*);
+    ULONG(STDMETHODCALLTYPE* Release)(StoreIStartupTask*);
+    HRESULT(STDMETHODCALLTYPE* GetIids)(StoreIStartupTask*, ULONG*, IID**);
+    HRESULT(STDMETHODCALLTYPE* GetRuntimeClassName)(StoreIStartupTask*, StoreHString*);
+    HRESULT(STDMETHODCALLTYPE* GetTrustLevel)(StoreIStartupTask*, StoreTrustLevel*);
+    HRESULT(STDMETHODCALLTYPE* RequestEnableAsync)(StoreIStartupTask*, StoreIAsyncOperationStartupTaskState**);
+    HRESULT(STDMETHODCALLTYPE* Disable)(StoreIStartupTask*);
+    HRESULT(STDMETHODCALLTYPE* get_State)(StoreIStartupTask*, int*);
+    HRESULT(STDMETHODCALLTYPE* get_TaskId)(StoreIStartupTask*, StoreHString*);
+};
+
+struct StoreIStartupTask {
+    const StoreIStartupTaskVtbl* lpVtbl;
+};
+
+struct StoreIStartupTaskStaticsVtbl {
+    HRESULT(STDMETHODCALLTYPE* QueryInterface)(StoreIStartupTaskStatics*, REFIID, void**);
+    ULONG(STDMETHODCALLTYPE* AddRef)(StoreIStartupTaskStatics*);
+    ULONG(STDMETHODCALLTYPE* Release)(StoreIStartupTaskStatics*);
+    HRESULT(STDMETHODCALLTYPE* GetIids)(StoreIStartupTaskStatics*, ULONG*, IID**);
+    HRESULT(STDMETHODCALLTYPE* GetRuntimeClassName)(StoreIStartupTaskStatics*, StoreHString*);
+    HRESULT(STDMETHODCALLTYPE* GetTrustLevel)(StoreIStartupTaskStatics*, StoreTrustLevel*);
+    HRESULT(STDMETHODCALLTYPE* GetForCurrentPackageAsync)(StoreIStartupTaskStatics*, void**);
+    HRESULT(STDMETHODCALLTYPE* GetAsync)(StoreIStartupTaskStatics*, StoreHString, StoreIAsyncOperationStartupTask**);
+};
+
+struct StoreIStartupTaskStatics {
+    const StoreIStartupTaskStaticsVtbl* lpVtbl;
+};
+
+struct StoreIAsyncInfoVtbl {
+    HRESULT(STDMETHODCALLTYPE* QueryInterface)(StoreIAsyncInfo*, REFIID, void**);
+    ULONG(STDMETHODCALLTYPE* AddRef)(StoreIAsyncInfo*);
+    ULONG(STDMETHODCALLTYPE* Release)(StoreIAsyncInfo*);
+    HRESULT(STDMETHODCALLTYPE* GetIids)(StoreIAsyncInfo*, ULONG*, IID**);
+    HRESULT(STDMETHODCALLTYPE* GetRuntimeClassName)(StoreIAsyncInfo*, StoreHString*);
+    HRESULT(STDMETHODCALLTYPE* GetTrustLevel)(StoreIAsyncInfo*, StoreTrustLevel*);
+    HRESULT(STDMETHODCALLTYPE* get_Id)(StoreIAsyncInfo*, UINT32*);
+    HRESULT(STDMETHODCALLTYPE* get_Status)(StoreIAsyncInfo*, int*);
+    HRESULT(STDMETHODCALLTYPE* get_ErrorCode)(StoreIAsyncInfo*, HRESULT*);
+    HRESULT(STDMETHODCALLTYPE* Cancel)(StoreIAsyncInfo*);
+    HRESULT(STDMETHODCALLTYPE* Close)(StoreIAsyncInfo*);
+};
+
+struct StoreIAsyncInfo {
+    const StoreIAsyncInfoVtbl* lpVtbl;
+};
+
+struct StoreIAsyncOperationStartupTaskVtbl {
+    HRESULT(STDMETHODCALLTYPE* QueryInterface)(StoreIAsyncOperationStartupTask*, REFIID, void**);
+    ULONG(STDMETHODCALLTYPE* AddRef)(StoreIAsyncOperationStartupTask*);
+    ULONG(STDMETHODCALLTYPE* Release)(StoreIAsyncOperationStartupTask*);
+    HRESULT(STDMETHODCALLTYPE* GetIids)(StoreIAsyncOperationStartupTask*, ULONG*, IID**);
+    HRESULT(STDMETHODCALLTYPE* GetRuntimeClassName)(StoreIAsyncOperationStartupTask*, StoreHString*);
+    HRESULT(STDMETHODCALLTYPE* GetTrustLevel)(StoreIAsyncOperationStartupTask*, StoreTrustLevel*);
+    HRESULT(STDMETHODCALLTYPE* put_Completed)(StoreIAsyncOperationStartupTask*, void*);
+    HRESULT(STDMETHODCALLTYPE* get_Completed)(StoreIAsyncOperationStartupTask*, void**);
+    HRESULT(STDMETHODCALLTYPE* GetResults)(StoreIAsyncOperationStartupTask*, StoreIStartupTask**);
+};
+
+struct StoreIAsyncOperationStartupTask {
+    const StoreIAsyncOperationStartupTaskVtbl* lpVtbl;
+};
+
+struct StoreIAsyncOperationStartupTaskStateVtbl {
+    HRESULT(STDMETHODCALLTYPE* QueryInterface)(StoreIAsyncOperationStartupTaskState*, REFIID, void**);
+    ULONG(STDMETHODCALLTYPE* AddRef)(StoreIAsyncOperationStartupTaskState*);
+    ULONG(STDMETHODCALLTYPE* Release)(StoreIAsyncOperationStartupTaskState*);
+    HRESULT(STDMETHODCALLTYPE* GetIids)(StoreIAsyncOperationStartupTaskState*, ULONG*, IID**);
+    HRESULT(STDMETHODCALLTYPE* GetRuntimeClassName)(StoreIAsyncOperationStartupTaskState*, StoreHString*);
+    HRESULT(STDMETHODCALLTYPE* GetTrustLevel)(StoreIAsyncOperationStartupTaskState*, StoreTrustLevel*);
+    HRESULT(STDMETHODCALLTYPE* put_Completed)(StoreIAsyncOperationStartupTaskState*, void*);
+    HRESULT(STDMETHODCALLTYPE* get_Completed)(StoreIAsyncOperationStartupTaskState*, void**);
+    HRESULT(STDMETHODCALLTYPE* GetResults)(StoreIAsyncOperationStartupTaskState*, int*);
+};
+
+struct StoreIAsyncOperationStartupTaskState {
+    const StoreIAsyncOperationStartupTaskStateVtbl* lpVtbl;
+};
+
+struct StoreWinRtApi {
+    HMODULE module;
+    RoInitializeFn roInitialize;
+    RoUninitializeFn roUninitialize;
+    RoGetActivationFactoryFn roGetActivationFactory;
+    WindowsCreateStringFn createString;
+    WindowsDeleteStringFn deleteString;
+    bool initialized;
+
+    StoreWinRtApi()
+        : module(NULL),
+          roInitialize(NULL),
+          roUninitialize(NULL),
+          roGetActivationFactory(NULL),
+          createString(NULL),
+          deleteString(NULL),
+          initialized(false) {}
+};
+
+const GUID kIidStoreIStartupTaskStatics =
+    {0xee5b60bd, 0xa148, 0x41a7, {0xb2, 0x6e, 0xe8, 0xb8, 0x8a, 0x1e, 0x62, 0xf8}};
+const GUID kIidStoreIAsyncInfo =
+    {0x00000036, 0x0000, 0x0000, {0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+
+bool LoadStoreWinRtApi(StoreWinRtApi* api) {
+    if (!api) return false;
+    api->module = LoadLibraryW(L"combase.dll");
+    if (!api->module) return false;
+
+    api->roInitialize = reinterpret_cast<RoInitializeFn>(GetProcAddress(api->module, "RoInitialize"));
+    api->roUninitialize = reinterpret_cast<RoUninitializeFn>(GetProcAddress(api->module, "RoUninitialize"));
+    api->roGetActivationFactory = reinterpret_cast<RoGetActivationFactoryFn>(GetProcAddress(api->module, "RoGetActivationFactory"));
+    api->createString = reinterpret_cast<WindowsCreateStringFn>(GetProcAddress(api->module, "WindowsCreateString"));
+    api->deleteString = reinterpret_cast<WindowsDeleteStringFn>(GetProcAddress(api->module, "WindowsDeleteString"));
+
+    if (!api->roInitialize || !api->roUninitialize || !api->roGetActivationFactory ||
+        !api->createString || !api->deleteString) {
+        FreeLibrary(api->module);
+        api->module = NULL;
+        return false;
+    }
+
+    HRESULT hr = api->roInitialize(0);
+    api->initialized = SUCCEEDED(hr);
+    if (hr == RPC_E_CHANGED_MODE) {
+        api->initialized = false;
+        return true;
+    }
+    if (FAILED(hr)) {
+        FreeLibrary(api->module);
+        api->module = NULL;
+        return false;
+    }
+    return true;
+}
+
+void UnloadStoreWinRtApi(StoreWinRtApi* api) {
+    if (!api) return;
+    if (api->initialized && api->roUninitialize) api->roUninitialize();
+    if (api->module) FreeLibrary(api->module);
+}
+
+bool StoreCreateHString(StoreWinRtApi* api, const wchar_t* text, StoreHString* value) {
+    if (!api || !api->createString || !text || !value) return false;
+    *value = NULL;
+    return SUCCEEDED(api->createString(text, static_cast<UINT32>(wcslen(text)), value));
+}
+
+void StoreDeleteHString(StoreWinRtApi* api, StoreHString value) {
+    if (api && api->deleteString && value) api->deleteString(value);
+}
+
+bool WaitStoreAsync(void* operation, DWORD timeoutMs) {
+    if (!operation) return false;
+
+    StoreIAsyncInfo* info = NULL;
+    HRESULT hr = reinterpret_cast<IUnknown*>(operation)->QueryInterface(kIidStoreIAsyncInfo,
+                                                                        reinterpret_cast<void**>(&info));
+    if (FAILED(hr) || !info) return false;
+
+    DWORD startTick = GetTickCount();
+    bool ok = false;
+    for (;;) {
+        int status = StoreAsyncStarted;
+        hr = info->lpVtbl->get_Status(info, &status);
+        if (FAILED(hr)) break;
+
+        if (status == StoreAsyncCompleted) {
+            ok = true;
+            break;
+        }
+        if (status == StoreAsyncCanceled || status == StoreAsyncError) {
+            break;
+        }
+        if (GetTickCount() - startTick > timeoutMs) {
+            info->lpVtbl->Cancel(info);
+            break;
+        }
+        Sleep(25);
+    }
+
+    info->lpVtbl->Close(info);
+    info->lpVtbl->Release(info);
+    return ok;
+}
+
+bool GetStoreStartupTask(StoreWinRtApi* api, StoreIStartupTask** task) {
+    if (!api || !task) return false;
+    *task = NULL;
+
+    StoreHString className = NULL;
+    StoreHString taskId = NULL;
+    StoreIStartupTaskStatics* statics = NULL;
+    StoreIAsyncOperationStartupTask* operation = NULL;
+
+    bool ok = false;
+    HRESULT hr = E_FAIL;
+    if (!StoreCreateHString(api, L"Windows.ApplicationModel.StartupTask", &className)) goto cleanup;
+    hr = api->roGetActivationFactory(className, kIidStoreIStartupTaskStatics,
+                                     reinterpret_cast<void**>(&statics));
+    if (FAILED(hr) || !statics) goto cleanup;
+    if (!StoreCreateHString(api, kStoreStartupTaskId, &taskId)) goto cleanup;
+
+    hr = statics->lpVtbl->GetAsync(statics, taskId, &operation);
+    if (FAILED(hr) || !operation) goto cleanup;
+    if (!WaitStoreAsync(operation, 3000)) goto cleanup;
+
+    hr = operation->lpVtbl->GetResults(operation, task);
+    ok = SUCCEEDED(hr) && *task != NULL;
+
+cleanup:
+    if (operation) operation->lpVtbl->Release(operation);
+    if (statics) statics->lpVtbl->Release(statics);
+    StoreDeleteHString(api, taskId);
+    StoreDeleteHString(api, className);
+    return ok;
+}
+
+bool IsStoreStartupEnabled() {
+    StoreWinRtApi api;
+    if (!LoadStoreWinRtApi(&api)) return false;
+
+    StoreIStartupTask* task = NULL;
+    bool enabled = false;
+    if (GetStoreStartupTask(&api, &task)) {
+        int state = StoreStartupTaskDisabled;
+        if (SUCCEEDED(task->lpVtbl->get_State(task, &state))) {
+            enabled = state == StoreStartupTaskEnabled || state == StoreStartupTaskEnabledByPolicy;
+        }
+        task->lpVtbl->Release(task);
+    }
+
+    UnloadStoreWinRtApi(&api);
+    return enabled;
+}
+
+bool SetStoreStartupEnabled(bool enabled) {
+    StoreWinRtApi api;
+    if (!LoadStoreWinRtApi(&api)) return false;
+
+    StoreIStartupTask* task = NULL;
+    bool ok = false;
+    if (!GetStoreStartupTask(&api, &task)) goto cleanup;
+
+    if (!enabled) {
+        ok = SUCCEEDED(task->lpVtbl->Disable(task));
+        goto cleanup;
+    }
+
+    {
+        StoreIAsyncOperationStartupTaskState* operation = NULL;
+        HRESULT hr = task->lpVtbl->RequestEnableAsync(task, &operation);
+        if (SUCCEEDED(hr) && operation && WaitStoreAsync(operation, 30000)) {
+            int state = StoreStartupTaskDisabled;
+            if (SUCCEEDED(operation->lpVtbl->GetResults(operation, &state))) {
+                ok = state == StoreStartupTaskEnabled || state == StoreStartupTaskEnabledByPolicy;
+            }
+        }
+        if (operation) operation->lpVtbl->Release(operation);
+    }
+
+cleanup:
+    if (task) task->lpVtbl->Release(task);
+    UnloadStoreWinRtApi(&api);
+    return ok;
+}
+
 bool IsRunKeyStartupEnabled() {
+    if (UseStoreStartupIntegration()) return false;
+
     HKEY key = NULL;
     LONG rc = RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_READ, &key);
     if (rc != ERROR_SUCCESS) return false;
@@ -865,6 +1186,8 @@ bool IsRunKeyStartupEnabled() {
 }
 
 void SetRunKeyStartupEnabled(bool enabled) {
+    if (UseStoreStartupIntegration()) return;
+
     HKEY key = NULL;
     LONG rc = RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, NULL, 0, KEY_SET_VALUE, NULL, &key, NULL);
     if (rc != ERROR_SUCCESS) return;
@@ -885,17 +1208,23 @@ void SetRunKeyStartupEnabled(bool enabled) {
 }
 
 bool IsScheduledTaskStartupEnabled() {
+    if (UseStoreStartupIntegration()) return false;
+
     std::wstring command = L"schtasks.exe /Query /TN " + QuoteCommandLineArgument(kStartupTaskName);
     return RunHiddenCommand(command, 3000);
 }
 
 bool DeleteScheduledTaskStartup() {
+    if (UseStoreStartupIntegration()) return true;
+
     if (!IsScheduledTaskStartupEnabled()) return true;
     std::wstring command = L"schtasks.exe /Delete /TN " + QuoteCommandLineArgument(kStartupTaskName) + L" /F";
     return RunHiddenCommand(command, 5000);
 }
 
 bool SetScheduledTaskStartupEnabled(bool enabled) {
+    if (UseStoreStartupIntegration()) return true;
+
     if (!enabled) return DeleteScheduledTaskStartup();
 
     std::wstring action = QuoteCommandLineArgument(GetExePath()) + L" --background";
@@ -907,6 +1236,8 @@ bool SetScheduledTaskStartupEnabled(bool enabled) {
 }
 
 bool IsStartupEnabled() {
+    if (UseStoreStartupIntegration()) return IsStoreStartupEnabled();
+
     return IsRunKeyStartupEnabled() || IsScheduledTaskStartupEnabled();
 }
 
@@ -1058,6 +1389,11 @@ MaybeBool ReadNightLightActiveViaCloudReader() {
 }
 
 void SetStartupEnabled(bool enabled) {
+    if (UseStoreStartupIntegration()) {
+        SetStoreStartupEnabled(enabled);
+        return;
+    }
+
     if (enabled) {
         SetScheduledTaskStartupEnabled(true);
         SetRunKeyStartupEnabled(true);
@@ -1085,7 +1421,8 @@ void LoadConfig(bool refreshStartupState = false) {
         g_config.startWithWindows = value != 0;
     }
     std::wstring stringValue;
-    if (ReadStringValue(HKEY_CURRENT_USER, kConfigKey, L"SupporterCode", &stringValue)) {
+    if (IsSupportFeatureAvailable() &&
+        ReadStringValue(HKEY_CURRENT_USER, kConfigKey, L"SupporterCode", &stringValue)) {
         g_config.supporterCode = NormalizeSupporterCode(stringValue);
     }
     if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"Language", &value)) {
@@ -1103,7 +1440,9 @@ void LoadConfig(bool refreshStartupState = false) {
     if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"DayStartMinute", &value)) {
         g_config.dayStartMinute = ClampInt(static_cast<int>(value), 0, 59);
     }
-    if (refreshStartupState) {
+    if (!IsStartupFeatureAvailable()) {
+        g_config.startWithWindows = false;
+    } else if (refreshStartupState) {
         g_config.startWithWindows = IsStartupEnabled();
     }
     if (IsLocalizedTextValue(TxtStarting, g_status)) {
@@ -1116,14 +1455,19 @@ void SaveConfig() {
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"NightBrightness", g_config.nightBrightness);
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"FollowNightLight", g_config.followNightLight ? 1 : 0);
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"AutoRestoreManualChanges", g_config.autoRestoreManualChanges ? 1 : 0);
-    WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"StartWithWindows", g_config.startWithWindows ? 1 : 0);
-    WriteStringValue(HKEY_CURRENT_USER, kConfigKey, L"SupporterCode", g_config.supporterCode);
+    if (IsSupportFeatureAvailable()) {
+        WriteStringValue(HKEY_CURRENT_USER, kConfigKey, L"SupporterCode", g_config.supporterCode);
+    }
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"Language", static_cast<DWORD>(g_config.language));
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"NightStartHour", g_config.nightStartHour);
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"NightStartMinute", g_config.nightStartMinute);
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"DayStartHour", g_config.dayStartHour);
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"DayStartMinute", g_config.dayStartMinute);
     SetStartupEnabled(g_config.startWithWindows);
+    if (UseStoreStartupIntegration()) {
+        g_config.startWithWindows = IsStartupEnabled();
+    }
+    WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"StartWithWindows", g_config.startWithWindows ? 1 : 0);
 }
 
 const wchar_t* const kNightLightStateKeys[] = {
@@ -1619,6 +1963,7 @@ DWORD SupportReminderDateValue(const SYSTEMTIME& local) {
 }
 
 void CheckWeeklySupportReminder() {
+    if (!IsSupportFeatureAvailable()) return;
     if (HasSupporterBadge()) return;
 
     SYSTEMTIME local = {};
@@ -1981,6 +2326,27 @@ bool ShouldUseDarkAppTheme() {
     return lightTheme == 0;
 }
 
+void ApplySystemMenuTheme(bool dark) {
+    HMODULE uxtheme = LoadLibraryW(L"uxtheme.dll");
+    if (!uxtheme) return;
+
+    typedef int(WINAPI* SetPreferredAppModeFn)(int);
+    typedef void(WINAPI* FlushMenuThemesFn)();
+    SetPreferredAppModeFn setPreferredAppMode =
+        reinterpret_cast<SetPreferredAppModeFn>(GetProcAddress(uxtheme, MAKEINTRESOURCEA(135)));
+    FlushMenuThemesFn flushMenuThemes =
+        reinterpret_cast<FlushMenuThemesFn>(GetProcAddress(uxtheme, MAKEINTRESOURCEA(136)));
+
+    if (setPreferredAppMode) {
+        setPreferredAppMode(dark ? 2 : 3);  // AllowDark / ForceLight.
+    }
+    if (flushMenuThemes) {
+        flushMenuThemes();
+    }
+
+    FreeLibrary(uxtheme);
+}
+
 UiTheme BuildUiTheme() {
     UiTheme theme = {};
     theme.dark = ShouldUseDarkAppTheme();
@@ -2028,6 +2394,7 @@ UiTheme BuildUiTheme() {
 
 void ReloadUiTheme() {
     g_theme = BuildUiTheme();
+    ApplySystemMenuTheme(g_theme.dark);
     if (g_windowBrush) {
         DeleteObject(g_windowBrush);
         g_windowBrush = NULL;
@@ -2323,7 +2690,8 @@ bool UpdateSettingsAnimations(HWND hwnd) {
         InvalidateRect(hwnd, NULL, FALSE);
     }
 
-    bool supportLoop = hwnd == g_settingsWindow && !HasSupporterBadge() &&
+    bool supportLoop = IsSupportFeatureAvailable() &&
+                       hwnd == g_settingsWindow && !HasSupporterBadge() &&
                        !g_settingsInfoDialogOpen && !IsIconic(hwnd);
     if (supportLoop) {
         g_supportButtonAnim = (g_supportButtonAnim + 1) % 120;
@@ -2485,6 +2853,8 @@ void AddRoundedRectPath(Gdiplus::GraphicsPath* path, Gdiplus::REAL x, Gdiplus::R
 }
 
 void ShowTrayMenu(HWND hwnd) {
+    ReloadUiTheme();
+
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
 
@@ -2495,11 +2865,15 @@ void ShowTrayMenu(HWND hwnd) {
     AppendMenuW(menu, MF_STRING, kMenuApply, T(TxtMenuApply));
     AppendMenuW(menu, MF_STRING, kMenuSettings, T(TxtMenuSettings));
     AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(menu, MF_STRING | (IsStartupEnabled() ? MF_CHECKED : 0), kMenuStartup, T(TxtMenuStartup));
+    if (IsStartupFeatureAvailable()) {
+        AppendMenuW(menu, MF_STRING | (IsStartupEnabled() ? MF_CHECKED : 0), kMenuStartup, T(TxtMenuStartup));
+    }
     AppendMenuW(menu, MF_STRING, kMenuDisplaySettings, T(TxtMenuDisplaySettings));
     AppendMenuW(menu, MF_STRING, kMenuNightLightSettings, T(TxtMenuNightLightSettings));
-    AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(menu, MF_STRING, kMenuSupport, T(TxtMenuSupport));
+    if (IsSupportFeatureAvailable()) {
+        AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+        AppendMenuW(menu, MF_STRING, kMenuSupport, T(TxtMenuSupport));
+    }
     AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuW(menu, MF_STRING, kMenuExit, T(TxtMenuExit));
 
@@ -2666,7 +3040,7 @@ SettingsLayout BuildSettingsLayout(bool useSystemSwitching) {
     layout.behaviorTop = layout.appearanceTop + layout.appearanceH + cardGap;
     layout.behaviorX = layout.cardX;
     layout.behaviorW = layout.cardW;
-    layout.behaviorH = 132;
+    layout.behaviorH = IsStartupFeatureAvailable() ? 132 : 92;
     layout.behaviorRow1 = layout.behaviorTop + 52;
     layout.behaviorRow2 = layout.behaviorRow1 + 40;
 
@@ -2818,7 +3192,8 @@ int HitTestSettingsControl(POINT pt) {
     }
 
     if (PtInUiBox(pt, layout.cardX + 12, layout.behaviorRow1 - 5, layout.cardW - 24, 36)) return HoverAutoRestore;
-    if (PtInUiBox(pt, layout.cardX + 12, layout.behaviorRow2 - 5, layout.cardW - 24, 36)) return HoverStartup;
+    if (IsStartupFeatureAvailable() &&
+        PtInUiBox(pt, layout.cardX + 12, layout.behaviorRow2 - 5, layout.cardW - 24, 36)) return HoverStartup;
 
     if (!useSystem && PtInUiBox(pt, TimeStepperMinusX(layout), layout.switchNightY - 4, 28, 28)) return HoverNightMinus;
     if (!useSystem && PtInUiBox(pt, TimeStepperPlusX(layout), layout.switchNightY - 4, 28, 28)) return HoverNightPlus;
@@ -2839,6 +3214,8 @@ int HitTestSettingsFooterControl(HWND hwnd, POINT pt) {
 }
 
 int HitTestSettingsTopControl(POINT pt) {
+    if (!IsSupportFeatureAvailable()) return HoverNone;
+
     pt = SettingsViewportPoint(pt);
     if (pt.y < 0) return HoverNone;
     if (HasSupporterBadge() && PtInUiBox(pt, 448, 28, 160, 32)) return HoverSupporterBadge;
@@ -4660,7 +5037,7 @@ void DrawSettingsTitleBar(HWND hwnd, HDC dc) {
                          g_theme.dark ? Rgb(255, 255, 255) : Rgb(0, 0, 0),
                          g_theme.dark ? 18 : 16);
 
-    RECT title = UiBox(16, 0, 330, kSettingsTitleBarHeight);
+    RECT title = UiBox(16, 0, 430, kSettingsTitleBarHeight);
     DrawTextLine(dc, T(TxtSettingsTitle), title, g_smallFont, g_theme.mutedText,
                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
@@ -5392,6 +5769,8 @@ LRESULT CALLBACK SupportWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
 }
 
 void ShowSupportWindow(HWND owner) {
+    if (!IsSupportFeatureAvailable()) return;
+
     if (g_supportWindow) {
         SetForegroundWindow(g_supportWindow);
         return;
@@ -5498,17 +5877,20 @@ void DrawSettingsChrome(HWND hwnd, HDC dc) {
     SetViewportOrgEx(dc, 0, Ui(kSettingsTitleBarHeight) - Ui(g_settingsScrollY) + Ui(appearOffset), &oldOrigin);
 
     DrawAppMark(dc, layout.headerIconX, layout.headerIconY);
-    RECT title = UiBox(layout.headerTitleX, layout.headerTitleY, 500, 30);
+    RECT title = UiBox(layout.headerTitleX, layout.headerTitleY,
+                       IsSupportFeatureAvailable() ? 350 : 500, 30);
     DrawTextLine(dc, T(TxtDisplayName), title, g_titleFont, g_theme.titleText,
                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     RECT subtitle = UiBox(layout.headerTitleX, layout.headerSubtitleY, 500, 22);
     DrawTextLine(dc, T(TxtSettingsSubtitle), subtitle, g_smallFont, g_theme.mutedText,
                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    if (HasSupporterBadge()) {
-        DrawSupporterBadge(dc, SupporterBadgeLeft(dc), 29);
-    } else {
-        DrawSupportButton(dc, SupportButtonLeft(dc), 30);
+    if (IsSupportFeatureAvailable()) {
+        if (HasSupporterBadge()) {
+            DrawSupporterBadge(dc, SupporterBadgeLeft(dc), 29);
+        } else {
+            DrawSupportButton(dc, SupportButtonLeft(dc), 30);
+        }
     }
 
     DrawHeroCard(dc, layout);
@@ -5576,19 +5958,23 @@ void DrawSettingsChrome(HWND hwnd, HDC dc) {
     DrawTextLine(dc, T(TxtBehaviorGroup), section, g_sectionFont, g_theme.titleText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     DrawSettingsRowHoverBox(dc, layout.cardX + 12, row1 - 5, layout.cardW - 24, 36,
                             InteractionPercent(HoverAutoRestore));
-    DrawSettingsRowHoverBox(dc, layout.cardX + 12, row2 - 5, layout.cardW - 24, 36,
-                            InteractionPercent(HoverStartup));
+    if (IsStartupFeatureAvailable()) {
+        DrawSettingsRowHoverBox(dc, layout.cardX + 12, row2 - 5, layout.cardW - 24, 36,
+                                InteractionPercent(HoverStartup));
+    }
     DrawSettingRowText(dc, T(TxtAutoRestoreManual), rowX, row1, 330);
     DrawToggle(dc, controlX, row1 + 2, g_settingsDraft.autoRestoreManualChanges, IsHover(HoverAutoRestore), HoverAutoRestore);
-    DrawCardSeparator(dc, 56, row2 - 10, 528);
-    DrawSettingRowText(dc, T(TxtStartWithWindows), rowX, row2, 330);
-    DrawToggle(dc, controlX, row2 + 2, g_settingsDraft.startWithWindows, IsHover(HoverStartup), HoverStartup);
+    if (IsStartupFeatureAvailable()) {
+        DrawCardSeparator(dc, 56, row2 - 10, 528);
+        DrawSettingRowText(dc, T(TxtStartWithWindows), rowX, row2, 330);
+        DrawToggle(dc, controlX, row2 + 2, g_settingsDraft.startWithWindows, IsHover(HoverStartup), HoverStartup);
+    }
 
     DrawLanguageDropdown(dc, layout);
     SetViewportOrgEx(dc, oldOrigin.x, oldOrigin.y, NULL);
     DrawSettingsFooter(dc, visibleHeight);
     DrawSettingsScrollbar(dc, layout, visibleHeight);
-    if (!g_settingsInfoDialogOpen && IsHover(HoverSupporterBadge)) {
+    if (IsSupportFeatureAvailable() && !g_settingsInfoDialogOpen && IsHover(HoverSupporterBadge)) {
         DrawSupporterTooltip(dc, 408, 66);
     }
     DrawSettingsInfoDialog(dc, hwnd);
@@ -5757,7 +6143,8 @@ void HandleSettingsClick(HWND hwnd, POINT pt) {
         InvalidateRect(hwnd, NULL, FALSE);
         return;
     }
-    if (PtInUiBox(pt, layout.cardX + 12, layout.behaviorRow2 - 5, layout.cardW - 24, 36)) {
+    if (IsStartupFeatureAvailable() &&
+        PtInUiBox(pt, layout.cardX + 12, layout.behaviorRow2 - 5, layout.cardW - 24, 36)) {
         g_settingsDraft.startWithWindows = !g_settingsDraft.startWithWindows;
         InvalidateRect(hwnd, NULL, FALSE);
         return;
@@ -6307,6 +6694,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
             ShowSettingsWindow(hwnd);
             return 0;
         case kMenuStartup:
+            if (!IsStartupFeatureAvailable()) return 0;
             g_config.startWithWindows = !IsStartupEnabled();
             SaveConfig();
             return 0;
@@ -6317,6 +6705,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
             ShellExecuteW(hwnd, L"open", L"ms-settings:nightlight", NULL, NULL, SW_SHOWNORMAL);
             return 0;
         case kMenuSupport:
+            if (!IsSupportFeatureAvailable()) return 0;
             ShowSupportWindow(hwnd);
             return 0;
         case kMenuExit:

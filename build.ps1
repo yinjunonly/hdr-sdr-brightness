@@ -1,6 +1,7 @@
 param(
     [switch]$Clean,
-    [string]$Version
+    [string]$Version,
+    [switch]$Store
 )
 
 $ErrorActionPreference = 'Stop'
@@ -114,6 +115,7 @@ $versionHeaderContent = @"
         -I $obj `
         -DUNICODE `
         -D_UNICODE `
+        $(if ($Store) { '-DHSB_STORE_BUILD=1' } else { @() }) `
         -Wall `
         -Wextra `
         -Wno-missing-field-initializers `
@@ -133,4 +135,5 @@ $versionHeaderContent = @"
     Pop-Location
 }
 
-Write-Host "Built $exe (version $Version)"
+$flavor = if ($Store) { 'Store' } else { 'desktop' }
+Write-Host "Built $exe (version $Version, $flavor)"
