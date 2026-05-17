@@ -147,10 +147,14 @@ Windows 10 或 Windows 11 桌面电脑
 Screenshots:
 
 ```text
-Settings window, light theme
-Settings window, dark theme
-Tray menu
-HDR preview / brightness controls
+en-US/settings-light-1366x768.png
+en-US/settings-dark-1366x768.png
+en-US/tray-menu-1366x768.png
+en-US/hdr-preview-controls-1366x768.png
+zh-CN/settings-light-1366x768.png
+zh-CN/settings-dark-1366x768.png
+zh-CN/tray-menu-1366x768.png
+zh-CN/hdr-preview-controls-1366x768.png
 Windows Startup settings state, if needed for certification evidence
 ```
 

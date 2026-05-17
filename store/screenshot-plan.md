@@ -2,6 +2,13 @@
 
 Recommended Store screenshots. Capture at 1366 x 768 or larger with clear text and no personal information visible.
 
+Screenshots are organized by Store listing language:
+
+```text
+store\screenshots\en-US
+store\screenshots\zh-CN
+```
+
 ## Required Minimum
 
 ```text
@@ -49,8 +56,10 @@ Use this only for certification/support evidence, not necessarily as a public St
 
 ```text
 Use the Store build, not the desktop ZIP build.
+Use screenshots in the same language as the Partner Center listing.
 Confirm support/donation/supporter-code UI is hidden.
 When automating screenshots, move the natural app window on screen without resizing it. Do not force the settings window to a smaller fixed pixel size; high-DPI systems will compress the custom layout.
+Do not add decorative shadows, frames, device mockups, or marketing text over the screenshots.
 Confirm app name in title bar is HDR SDR Brightness Assistant 设置 / Settings.
 Confirm the main in-app title remains localized and short.
 Confirm no email, account, personal path, or unrelated app is visible.
