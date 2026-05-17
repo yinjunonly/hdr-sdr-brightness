@@ -128,6 +128,11 @@ enum HoverControl {
     HoverSupportCode = 724
 };
 
+enum NotificationAction {
+    NotificationActionDefault = 0,
+    NotificationActionSupportReminder = 1
+};
+
 const UINT32 kQdcOnlyActivePaths = 0x00000002;
 const UINT32 kDisplayConfigPathActive = 0x00000001;
 const UINT32 kDisplayConfigGetAdvancedColorInfo = 9;
@@ -347,6 +352,7 @@ bool g_settingsDraftActive = false;
 std::wstring g_status = L"Starting";
 std::wstring g_lastNotificationTitle;
 std::wstring g_lastNotificationBody;
+NotificationAction g_lastNotificationAction = NotificationActionDefault;
 int g_lastAppliedBrightness = -1;
 bool g_lastDecisionNight = false;
 int g_lastHdrTargetCount = 0;
@@ -1557,10 +1563,12 @@ void UpdateTrayTip() {
     g_tray.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
 }
 
-void ShowTrayNotification(const std::wstring& title, const std::wstring& body) {
+void ShowTrayNotification(const std::wstring& title, const std::wstring& body,
+                          NotificationAction action = NotificationActionDefault) {
     if (!g_mainWindow) return;
     g_lastNotificationTitle = title;
     g_lastNotificationBody = body;
+    g_lastNotificationAction = action;
 
     g_tray.uFlags = NIF_INFO;
     CopyString(g_tray.szInfoTitle, sizeof(g_tray.szInfoTitle) / sizeof(g_tray.szInfoTitle[0]), title);
@@ -1574,6 +1582,10 @@ void ShowTrayNotification(const std::wstring& title, const std::wstring& body) {
 
 void ShowLastNotificationDialog() {
     if (g_lastNotificationBody.empty()) return;
+    if (g_lastNotificationAction == NotificationActionSupportReminder) {
+        ShowSupportWindow(g_mainWindow);
+        return;
+    }
     ShowNotificationDialogWindow();
 }
 
@@ -1586,6 +1598,31 @@ void NotifyManualCorrection(int brightness) {
     body << F(TxtNotifyBody, {PercentLabel(brightness)}) << L" "
          << F(TxtNotifyManualRestoreHint, {T(TxtAutoRestoreManual)});
     ShowTrayNotification(T(TxtNotifyTitle), body.str());
+}
+
+DWORD SupportReminderDateValue(const SYSTEMTIME& local) {
+    return static_cast<DWORD>(local.wYear) * 10000u +
+           static_cast<DWORD>(local.wMonth) * 100u +
+           static_cast<DWORD>(local.wDay);
+}
+
+void CheckWeeklySupportReminder() {
+    if (HasSupporterBadge()) return;
+
+    SYSTEMTIME local = {};
+    GetLocalTime(&local);
+    if (local.wDayOfWeek != 6 || local.wHour != 20) return;
+
+    DWORD today = SupportReminderDateValue(local);
+    DWORD lastReminderDate = 0;
+    if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"LastSupportReminderDate", &lastReminderDate) &&
+        lastReminderDate == today) {
+        return;
+    }
+
+    WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"LastSupportReminderDate", today);
+    ShowTrayNotification(T(TxtSupportReminderTitle), T(TxtSupportReminderBody),
+                         NotificationActionSupportReminder);
 }
 
 void StopBrightnessTransition() {
@@ -5875,6 +5912,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
         return 0;
     case kApplyMessage:
         ApplyCurrentBrightness(wParam != 0);
+        CheckWeeklySupportReminder();
         return 0;
     case kRegistryChangedMessage:
         InvalidateNightLightScheduleCache();
@@ -5883,6 +5921,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
     case WM_TIMER:
         if (wParam == kRecheckTimer) {
             ApplyCurrentBrightness(false);
+            CheckWeeklySupportReminder();
             return 0;
         }
         if (wParam == kTransitionTimer) {

@@ -8,7 +8,7 @@
 
 It is built for OLED, QD-OLED, MiniLED, HDR monitors, HDR TVs, and HDR laptop panels where regular SDR apps may look too bright, too dim, or washed out after HDR is turned on.
 
-![HDR SDR Brightness settings window](image/README/settings-1.0.5-en.png)
+![Clean, efficient, intuitive light and dark UI](image/README/theme-adaptive-1.0.6.png)
 
 ### Download
 
@@ -17,7 +17,7 @@ Download the latest release from [GitHub Releases](https://github.com/yinjunonly
 Use the Windows x64 package:
 
 ```text
-HdrSdrBrightness-1.0.5-win64.zip
+HdrSdrBrightness-1.0.6-win64.zip
 ```
 
 Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no installer, no service, and no administrator privileges are required.
@@ -30,7 +30,16 @@ Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no inst
 - Restores the configured SDR brightness if a manual change is detected.
 - Provides a live SDR/HDR preview in the settings window.
 - Runs quietly from the system tray and can start with Windows.
+- Follows the Windows light/dark app theme automatically.
 - Supports Auto, Simplified Chinese, Traditional Chinese, English, Korean, Japanese, Russian, and German.
+
+### Design And Interaction
+
+HDR SDR Brightness is designed to feel simple in daily use: open it, choose comfortable day and night SDR brightness, then let it stay out of the way in the tray.
+
+The interface follows the Windows light or dark app theme automatically. Cards group related settings, sliders make brightness easy to compare, switches show on/off state clearly, and the SDR/HDR preview gives immediate visual feedback before you apply changes.
+
+Small interactions are kept responsive and restrained: buttons and controls react to the pointer with soft reveal highlights, dropdowns and brightness changes transition smoothly, and the Support author entry has a subtle motion cue without distracting from the main settings.
 
 ### Recommended Defaults
 
@@ -43,6 +52,16 @@ Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no inst
 | Restore manual changes | On |
 
 These values are only starting points. Tune them for your panel, room lighting, and preferred SDR white level.
+
+### When SDR Brightness Is Not Enough
+
+This app adjusts the Windows **SDR content brightness** level while HDR is enabled. If your HDR display is still washed out, clips highlights, has incorrect peak brightness, or looks wrong even after changing SDR brightness, also run Microsoft's official **Windows HDR Calibration** app:
+
+```text
+https://apps.microsoft.com/detail/9n7f2sm5d1lr?hl=en-US&gl=US
+```
+
+Microsoft's calibration app is useful for display-level HDR calibration, while HDR SDR Brightness is focused on day/night SDR content brightness control. They are complementary tools.
 
 ### Tray Usage
 
@@ -62,9 +81,11 @@ https://afdian.com/a/injunaid/plan
 
 The settings window and tray menu include a **Support author** entry. Supporter codes are checked locally and only show a small supporter badge. They are not a license system; the app remains fully usable without one.
 
+If no supporter code is active, the app may show a small weekly coffee reminder on Saturday evening.
+
 ### Background Performance
 
-![Background idle performance profile](image/README/performance-1.0.5.png)
+![Background idle performance profile](image/README/performance-1.0.6.png)
 
 Measured with the settings window closed and the app running in `--background` tray mode:
 
@@ -156,7 +177,7 @@ SDR white level
 
 它适合 OLED、QD-OLED、MiniLED、HDR 显示器、HDR 电视和支持 HDR 的笔记本屏幕。开启 HDR 后，如果普通 SDR 软件看起来过亮、过暗或发灰，可以用它自动切换和修正 SDR 内容亮度。
 
-![HDR SDR 亮度助手设置窗口](image/README/settings-1.0.5-zh.png)
+![简洁、高效、直观的浅色与深色界面](image/README/theme-adaptive-1.0.6-zh.png)
 
 ### 下载
 
@@ -165,7 +186,7 @@ SDR white level
 Windows x64 用户下载：
 
 ```text
-HdrSdrBrightness-1.0.5-win64.zip
+HdrSdrBrightness-1.0.6-win64.zip
 ```
 
 解压后运行 `HdrSdrBrightness.exe`。这是便携程序：不需要安装，不创建服务，也不需要管理员权限。
@@ -178,7 +199,16 @@ HdrSdrBrightness-1.0.5-win64.zip
 - 检测到手动修改 SDR 内容亮度后，可以自动恢复到配置值。
 - 设置页提供 SDR/HDR 实时预览。
 - 常驻系统托盘，并支持开机后安静启动。
+- 自动跟随 Windows 应用浅色/深色主题。
 - 支持自动、简体中文、繁体中文、English、한국어、日本語、Русский、Deutsch。
+
+### 设计与交互
+
+HDR SDR 亮度助手的设计目标是日常使用足够简单：打开后设置好白天和夜间 SDR 亮度，之后让它安静留在托盘里自动工作。
+
+界面会自动跟随 Windows 浅色或深色应用主题。卡片负责整理设置分区，滑块方便直观看到亮度差异，开关清楚表达开启/关闭状态，SDR/HDR 预览则让你在应用设置前先看到变化。
+
+交互效果尽量克制但有反馈：按钮和控件会跟随鼠标出现柔和高光，下拉菜单和亮度预览有平滑过渡，“支持作者”入口有轻微动态提示，但不会干扰主要设置。
 
 ### 推荐默认值
 
@@ -191,6 +221,16 @@ HdrSdrBrightness-1.0.5-win64.zip
 | 自动纠正手动调整 | 开启 |
 
 这些只是起点。你可以根据屏幕类型、房间光线和自己习惯的 SDR 白点继续调整。
+
+### SDR 亮度仍然不够时
+
+本工具调整的是 HDR 开启时 Windows 的 **SDR 内容亮度**。如果调整 SDR 亮度后，屏幕仍然发灰、高光过曝、峰值亮度不准，或 HDR 整体观感仍然异常，建议同时使用微软官方 **Windows HDR Calibration** 应用进行 HDR 校准：
+
+```text
+https://apps.microsoft.com/detail/9n7f2sm5d1lr?hl=zh-CN&gl=US
+```
+
+微软的校准应用更适合处理显示器级别的 HDR 校色和峰值亮度配置；HDR SDR 亮度助手则负责日夜模式下的 SDR 内容亮度控制。两者是配套关系。
 
 ### 托盘使用
 
@@ -210,9 +250,11 @@ https://afdian.com/a/injunaid/plan
 
 设置页和托盘菜单里都有 **支持作者** 入口。支持者码只在本地离线校验，用来显示一个小徽章；它不是授权系统，不影响软件正常使用。
 
+如果还没有激活支持者码，程序可能会在周六晚上显示一次简短的“请作者喝咖啡”提醒。
+
 ### 后台性能
 
-![后台空闲性能](image/README/performance-1.0.5.png)
+![后台空闲性能](image/README/performance-1.0.6.png)
 
 以下数据来自设置窗口关闭、程序以 `--background` 托盘模式运行时的采样：
 

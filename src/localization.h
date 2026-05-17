@@ -102,6 +102,8 @@ enum TextId {
     TxtSupporterTooltip,
     TxtSupportThanks,
     TxtSupportInvalidCode,
+    TxtSupportReminderTitle,
+    TxtSupportReminderBody,
     TxtTextCount
 };
 

@@ -101,7 +101,9 @@ const wchar_t* const kTextEn[TxtTextCount] = {
     L"Supporter",
     L"Thanks for the coffee!",
     L"Thank you for supporting this app.",
-    L"Invalid supporter code."
+    L"Invalid supporter code.",
+    L"Coffee time",
+    L"If this app helps your HDR setup, consider buying the author a coffee."
 };
 
 const wchar_t* const kTextZh[TxtTextCount] = {
@@ -190,7 +192,9 @@ const wchar_t* const kTextZh[TxtTextCount] = {
     L"支持者",
     L"感谢你的咖啡！",
     L"感谢你支持这个软件。",
-    L"支持者码无效。"
+    L"支持者码无效。",
+    L"请作者喝杯咖啡",
+    L"如果这个工具改善了你的 HDR 使用体验，可以考虑请作者喝杯咖啡。"
 };
 
 const wchar_t* const kTextKo[TxtTextCount] = {
@@ -279,7 +283,9 @@ const wchar_t* const kTextKo[TxtTextCount] = {
     L"후원자",
     L"커피 후원 고마워요!",
     L"이 앱을 후원해 주셔서 감사합니다.",
-    L"후원자 코드가 올바르지 않습니다."
+    L"후원자 코드가 올바르지 않습니다.",
+    L"커피 타임",
+    L"이 앱이 HDR 환경에 도움이 된다면 개발자에게 커피 한 잔을 후원해 주세요."
 };
 
 const wchar_t* const kTextJa[TxtTextCount] = {
@@ -368,7 +374,9 @@ const wchar_t* const kTextJa[TxtTextCount] = {
     L"支援者",
     L"コーヒーをありがとう！",
     L"このアプリを支援していただきありがとうございます。",
-    L"支援者コードが無効です。"
+    L"支援者コードが無効です。",
+    L"コーヒーの時間",
+    L"このアプリが HDR 環境に役立っているなら、作者にコーヒーを一杯贈ってください。"
 };
 
 const wchar_t* const kTextRu[TxtTextCount] = {
@@ -457,7 +465,9 @@ const wchar_t* const kTextRu[TxtTextCount] = {
     L"Поддержал",
     L"Спасибо за кофе!",
     L"Спасибо за поддержку приложения.",
-    L"Недействительный код поддержки."
+    L"Недействительный код поддержки.",
+    L"Время для кофе",
+    L"Если приложение помогает с HDR, угостите автора кофе."
 };
 
 const wchar_t* const kTextZhTw[TxtTextCount] = {
@@ -546,7 +556,9 @@ const wchar_t* const kTextZhTw[TxtTextCount] = {
     L"支持者",
     L"感謝你的咖啡！",
     L"感謝你支持這個軟體。",
-    L"支持者碼無效。"
+    L"支持者碼無效。",
+    L"請作者喝杯咖啡",
+    L"如果這個工具改善了你的 HDR 使用體驗，可以考慮請作者喝杯咖啡。"
 };
 
 const wchar_t* const kTextDe[TxtTextCount] = {
@@ -635,7 +647,9 @@ const wchar_t* const kTextDe[TxtTextCount] = {
     L"Unterstützer",
     L"Danke für den Kaffee!",
     L"Danke für deine Unterstützung.",
-    L"Ungültiger Unterstützer-Code."
+    L"Ungültiger Unterstützer-Code.",
+    L"Kaffeezeit",
+    L"Wenn diese App deinem HDR-Setup hilft, spendiere dem Autor gern einen Kaffee."
 };
 
 const wchar_t* const* TextTableForLanguage(int language) {
