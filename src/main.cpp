@@ -18,6 +18,8 @@
 #include <string>
 #include <vector>
 
+#include "version.h"
+
 namespace {
 
 const wchar_t kAppName[] = L"HdrSdrBrightness";
@@ -501,6 +503,10 @@ void UpdateSettingsWindowTitle(HWND hwnd) {
 }
 
 std::wstring PercentLabel(int value);
+
+std::wstring AppVersionLabel() {
+    return std::wstring(L"v") + APP_VERSION_W;
+}
 
 std::wstring GetExePath() {
     std::vector<wchar_t> path(MAX_PATH);
@@ -2301,6 +2307,11 @@ void DrawSettingsChrome(HWND hwnd, HDC dc) {
     RECT subtitle = UiBox(layout.headerTitleX, layout.headerSubtitleY, 300, 22);
     DrawTextLine(dc, T(TxtSettingsSubtitle), subtitle, g_smallFont, g_theme.mutedText,
                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    std::wstring version = AppVersionLabel();
+    RECT versionRect = UiBox(320, layout.headerSubtitleY, 72, 22);
+    DrawTextLine(dc, version.c_str(), versionRect, g_smallFont, g_theme.mutedText,
+                 DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     DrawSegmentedLanguage(dc, layout);
 

@@ -14,7 +14,7 @@ It is useful for OLED, QD-OLED, MiniLED, HDR monitors, HDR TVs, and HDR-capable 
 
 Download the latest release from [GitHub Releases](https://github.com/yinjunonly/hdr-sdr-brightness/releases/latest).
 
-Use the `HdrSdrBrightness-1.0.3-win64.zip` package, extract it, and run `HdrSdrBrightness.exe`.
+Use the `HdrSdrBrightness-1.0.4-win64.zip` package, extract it, and run `HdrSdrBrightness.exe`.
 
 ### Use
 
@@ -149,7 +149,7 @@ SDR white level
 
 请从 [GitHub Releases](https://github.com/yinjunonly/hdr-sdr-brightness/releases/latest) 下载最新版。
 
-下载 `HdrSdrBrightness-1.0.3-win64.zip`，解压后运行 `HdrSdrBrightness.exe`。
+下载 `HdrSdrBrightness-1.0.4-win64.zip`，解压后运行 `HdrSdrBrightness.exe`。
 
 ### 使用
 

@@ -88,9 +88,10 @@ if (-not (Test-Path -LiteralPath $icon)) {
 
 Push-Location $root
 try {
-    $versionHeaderContent = @"
+$versionHeaderContent = @"
 #pragma once
 #define APP_VERSION "$Version"
+#define APP_VERSION_W L"$Version"
 #define APP_VERSION_COMMA $($versionParts -join ',')
 "@
     Set-Content -LiteralPath $versionHeader -Value $versionHeaderContent -Encoding ASCII
@@ -107,6 +108,7 @@ try {
         -std=gnu++11 `
         -O2 `
         -mwindows `
+        -I $obj `
         -DUNICODE `
         -D_UNICODE `
         -Wall `
