@@ -48,6 +48,7 @@ const UINT32 kTransitionStepLevel = 50;
 const int kSettingsClientWidth = 640;
 const int kSettingsClientHeight = 620;
 const int kSettingsMinVisibleClientHeight = 560;
+const int kSettingsTitleBarHeight = 44;
 const int kSettingsFooterAreaHeight = 72;
 const int kAnimationSlotCount = 800;
 const int kPillControlRadius = 16;
@@ -80,6 +81,7 @@ const int kIdSupportCode = 2023;
 const int kIdSupportStatus = 2024;
 
 const wchar_t kDonationUrl[] = L"https://afdian.com/a/injunaid/plan";
+const wchar_t kGithubUrl[] = L"https://github.com/yinjunonly/hdr-sdr-brightness";
 
 #ifndef NIN_SELECT
 #define NIN_SELECT (WM_USER + 0)
@@ -118,6 +120,10 @@ enum HoverControl {
     HoverCancel = 603,
     HoverSupport = 604,
     HoverSupporterBadge = 605,
+    HoverTitleHelp = 611,
+    HoverTitleGithub = 612,
+    HoverTitleMinimize = 613,
+    HoverTitleClose = 614,
     HoverDialogOk = 701,
     HoverDialogClose = 702,
     HoverDialogLink = 703,
@@ -345,6 +351,8 @@ HINSTANCE g_instance = NULL;
 HWND g_mainWindow = NULL;
 HWND g_settingsWindow = NULL;
 NOTIFYICONDATAW g_tray = {};
+HICON g_trayIcon = NULL;
+HICON g_notificationIcon = NULL;
 UINT g_taskbarCreated = 0;
 Config g_config;
 Config g_settingsDraft;
@@ -548,6 +556,10 @@ void CleanupFontResources();
 void ShowNotificationDialogWindow();
 void ShowSettingsWindow(HWND owner);
 void ShowSupportWindow(HWND owner);
+
+void OpenGithubRepository(HWND owner) {
+    ShellExecuteW(owner, L"open", kGithubUrl, NULL, NULL, SW_SHOWNORMAL);
+}
 
 std::wstring AppVersionLabel() {
     return std::wstring(L"v") + APP_VERSION_W;
@@ -1574,7 +1586,7 @@ void ShowTrayNotification(const std::wstring& title, const std::wstring& body,
     CopyString(g_tray.szInfoTitle, sizeof(g_tray.szInfoTitle) / sizeof(g_tray.szInfoTitle[0]), title);
     CopyString(g_tray.szInfo, sizeof(g_tray.szInfo) / sizeof(g_tray.szInfo[0]), body);
     g_tray.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON;
-    g_tray.hBalloonIcon = g_tray.hIcon;
+    g_tray.hBalloonIcon = g_notificationIcon ? g_notificationIcon : g_tray.hIcon;
     g_tray.uTimeout = 5000;
     Shell_NotifyIconW(NIM_MODIFY, &g_tray);
     g_tray.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
@@ -1909,14 +1921,37 @@ void RefreshStatusTextForCurrentLanguage() {
 }
 
 void AddTrayIcon(HWND hwnd) {
+    if (g_notificationIcon && g_notificationIcon != g_trayIcon) DestroyIcon(g_notificationIcon);
+    if (g_trayIcon) DestroyIcon(g_trayIcon);
+    g_trayIcon = NULL;
+    g_notificationIcon = NULL;
+
     ZeroMemory(&g_tray, sizeof(g_tray));
     g_tray.cbSize = sizeof(g_tray);
     g_tray.hWnd = hwnd;
     g_tray.uID = 1;
     g_tray.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
     g_tray.uCallbackMessage = kTrayMessage;
-    g_tray.hIcon = LoadIconW(g_instance, MAKEINTRESOURCEW(IDI_APPICON));
-    if (!g_tray.hIcon) g_tray.hIcon = LoadIconW(NULL, IDI_APPLICATION);
+
+    int smallW = GetSystemMetrics(SM_CXSMICON);
+    int smallH = GetSystemMetrics(SM_CYSMICON);
+    int largeW = GetSystemMetrics(SM_CXICON);
+    int largeH = GetSystemMetrics(SM_CYICON);
+    g_trayIcon = reinterpret_cast<HICON>(LoadImageW(g_instance, MAKEINTRESOURCEW(IDI_APPICON),
+                                                    IMAGE_ICON, smallW, smallH, LR_DEFAULTCOLOR));
+    g_notificationIcon = reinterpret_cast<HICON>(LoadImageW(g_instance, MAKEINTRESOURCEW(IDI_APPICON),
+                                                            IMAGE_ICON, largeW, largeH, LR_DEFAULTCOLOR));
+    if (!g_trayIcon) {
+        HICON fallback = LoadIconW(g_instance, MAKEINTRESOURCEW(IDI_APPICON));
+        if (!fallback) fallback = LoadIconW(NULL, IDI_APPLICATION);
+        g_trayIcon = fallback ? CopyIcon(fallback) : NULL;
+    }
+    if (!g_notificationIcon) {
+        HICON fallback = LoadIconW(g_instance, MAKEINTRESOURCEW(IDI_APPICON));
+        if (!fallback) fallback = LoadIconW(NULL, IDI_APPLICATION);
+        g_notificationIcon = fallback ? CopyIcon(fallback) : NULL;
+    }
+    g_tray.hIcon = g_trayIcon ? g_trayIcon : LoadIconW(NULL, IDI_APPLICATION);
     CopyString(g_tray.szTip, sizeof(g_tray.szTip) / sizeof(g_tray.szTip[0]), T(TxtDisplayName));
     Shell_NotifyIconW(NIM_ADD, &g_tray);
     g_tray.uVersion = NOTIFYICON_VERSION_4;
@@ -1925,6 +1960,10 @@ void AddTrayIcon(HWND hwnd) {
 
 void RemoveTrayIcon() {
     Shell_NotifyIconW(NIM_DELETE, &g_tray);
+    if (g_notificationIcon && g_notificationIcon != g_trayIcon) DestroyIcon(g_notificationIcon);
+    if (g_trayIcon) DestroyIcon(g_trayIcon);
+    g_notificationIcon = NULL;
+    g_trayIcon = NULL;
 }
 
 void AppendMenuText(HMENU menu, UINT flags, UINT_PTR id, const std::wstring& text) {
@@ -2114,15 +2153,66 @@ bool PtInUiBox(POINT pt, int x, int y, int width, int height) {
     return PtInRect(&rect, pt) != FALSE;
 }
 
+POINT SettingsViewportPoint(POINT pt) {
+    pt.y -= Ui(kSettingsTitleBarHeight);
+    return pt;
+}
+
 POINT SettingsContentPoint(POINT pt) {
+    pt = SettingsViewportPoint(pt);
     pt.y += Ui(g_settingsScrollY);
     return pt;
 }
 
-RECT SettingsDialogBox(HWND hwnd) {
+bool IsSettingsTitleControl(int control) {
+    return control == HoverTitleHelp ||
+           control == HoverTitleGithub ||
+           control == HoverTitleMinimize ||
+           control == HoverTitleClose;
+}
+
+int SettingsTitleButtonX(int control) {
+    switch (control) {
+    case HoverTitleClose:
+        return kSettingsClientWidth - 46;
+    case HoverTitleMinimize:
+        return kSettingsClientWidth - 90;
+    case HoverTitleGithub:
+        return kSettingsClientWidth - 134;
+    case HoverTitleHelp:
+        return kSettingsClientWidth - 178;
+    default:
+        return 0;
+    }
+}
+
+RECT SettingsTitleButtonBox(int control) {
+    return UiBox(SettingsTitleButtonX(control), 5, 38, 34);
+}
+
+int HitTestSettingsTitleControl(POINT pt) {
+    if (pt.y < 0 || pt.y >= Ui(kSettingsTitleBarHeight)) return HoverNone;
+    static const int controls[] = {
+        HoverTitleHelp,
+        HoverTitleGithub,
+        HoverTitleMinimize,
+        HoverTitleClose
+    };
+    for (size_t i = 0; i < sizeof(controls) / sizeof(controls[0]); ++i) {
+        RECT rect = SettingsTitleButtonBox(controls[i]);
+        if (PtInRect(&rect, pt)) return controls[i];
+    }
+    return HoverNone;
+}
+
+int SettingsContentClientHeight(HWND hwnd) {
     RECT client = {};
     GetClientRect(hwnd, &client);
-    int visibleHeight = FromUi(client.bottom - client.top);
+    return std::max(1, FromUi(client.bottom - client.top) - kSettingsTitleBarHeight);
+}
+
+RECT SettingsDialogBox(HWND hwnd) {
+    int visibleHeight = SettingsContentClientHeight(hwnd);
     const int w = 430;
     const int h = 220;
     int x = (kSettingsClientWidth - w) / 2;
@@ -2208,6 +2298,10 @@ bool UpdateSettingsAnimations(HWND hwnd) {
         HoverCancel,
         HoverSupport,
         HoverSupporterBadge,
+        HoverTitleHelp,
+        HoverTitleGithub,
+        HoverTitleMinimize,
+        HoverTitleClose,
         HoverDialogOk,
         HoverDialogClose,
         HoverDialogLink,
@@ -2233,7 +2327,7 @@ bool UpdateSettingsAnimations(HWND hwnd) {
                        !g_settingsInfoDialogOpen && !IsIconic(hwnd);
     if (supportLoop) {
         g_supportButtonAnim = (g_supportButtonAnim + 1) % 120;
-        RECT supportRect = UiBox(442, 12, 174, 54);
+        RECT supportRect = UiBox(442, kSettingsTitleBarHeight + 12, 174, 54);
         InvalidateRect(hwnd, &supportRect, FALSE);
     }
 
@@ -2457,14 +2551,17 @@ int SettingsVisibleClientHeight(int contentHeight, DWORD style, DWORD exStyle) {
     RECT work = {};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
     int workHeight = work.bottom - work.top;
-    int safeClientPx = std::max(Ui(kSettingsMinVisibleClientHeight), workHeight - Ui(96));
+    int safeClientPx = std::max(Ui(kSettingsMinVisibleClientHeight),
+                                workHeight - Ui(96 + kSettingsTitleBarHeight));
     int safeClientLogical = FromUi(safeClientPx);
     int maxVisible = std::max(kSettingsMinVisibleClientHeight, safeClientLogical);
 
-    SIZE maxWindow = WindowSizeForClient(style, exStyle, Ui(kSettingsClientWidth), Ui(maxVisible));
+    SIZE maxWindow = WindowSizeForClient(style, exStyle, Ui(kSettingsClientWidth),
+                                         Ui(maxVisible + kSettingsTitleBarHeight));
     while (maxVisible > kSettingsMinVisibleClientHeight && maxWindow.cy > workHeight - Ui(24)) {
         maxVisible -= 20;
-        maxWindow = WindowSizeForClient(style, exStyle, Ui(kSettingsClientWidth), Ui(maxVisible));
+        maxWindow = WindowSizeForClient(style, exStyle, Ui(kSettingsClientWidth),
+                                        Ui(maxVisible + kSettingsTitleBarHeight));
     }
 
     return std::min(contentHeight, maxVisible);
@@ -2590,15 +2687,14 @@ void ResizeSettingsWindowToLayout(HWND hwnd) {
     DWORD exStyle = static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_EXSTYLE));
     int visibleHeight = SettingsVisibleClientHeight(layout.clientHeight, style, exStyle);
     g_settingsScrollY = ClampInt(g_settingsScrollY, 0, std::max(0, layout.footerY - (visibleHeight - kSettingsFooterAreaHeight)));
-    SIZE size = WindowSizeForClient(style, exStyle, Ui(kSettingsClientWidth), Ui(visibleHeight));
+    SIZE size = WindowSizeForClient(style, exStyle, Ui(kSettingsClientWidth),
+                                    Ui(visibleHeight + kSettingsTitleBarHeight));
     SetWindowPos(hwnd, NULL, 0, 0, size.cx, size.cy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     UpdateHdrPreviewWindow(hwnd);
 }
 
 int SettingsVisibleClientHeight(HWND hwnd) {
-    RECT client = {};
-    GetClientRect(hwnd, &client);
-    return FromUi(client.bottom - client.top);
+    return SettingsContentClientHeight(hwnd);
 }
 
 int SettingsScrollableViewportHeight(HWND hwnd) {
@@ -2733,6 +2829,8 @@ int HitTestSettingsControl(POINT pt) {
 }
 
 int HitTestSettingsFooterControl(HWND hwnd, POINT pt) {
+    pt = SettingsViewportPoint(pt);
+    if (pt.y < 0) return HoverNone;
     int footerY = SettingsVisibleClientHeight(hwnd) - kSettingsFooterAreaHeight + 19;
     if (PtInUiBox(pt, 348, footerY, 84, 34)) return HoverOk;
     if (PtInUiBox(pt, 438, footerY, 84, 34)) return HoverApply;
@@ -2741,6 +2839,8 @@ int HitTestSettingsFooterControl(HWND hwnd, POINT pt) {
 }
 
 int HitTestSettingsTopControl(POINT pt) {
+    pt = SettingsViewportPoint(pt);
+    if (pt.y < 0) return HoverNone;
     if (HasSupporterBadge() && PtInUiBox(pt, 448, 28, 160, 32)) return HoverSupporterBadge;
     if (!HasSupporterBadge() && PtInUiBox(pt, 448, 30, 160, 28)) return HoverSupport;
     return HoverNone;
@@ -2748,6 +2848,8 @@ int HitTestSettingsTopControl(POINT pt) {
 
 int HitTestSettingsDialogControl(HWND hwnd, POINT pt) {
     if (!g_settingsInfoDialogOpen) return HoverNone;
+    pt = SettingsViewportPoint(pt);
+    if (pt.y < 0) return HoverNone;
 
     RECT closeRect = SettingsDialogCloseBox(hwnd);
     if (PtInRect(&closeRect, pt)) return HoverDialogClose;
@@ -2777,7 +2879,10 @@ void UpdateSettingsHover(HWND hwnd, POINT pt) {
         g_trackingSettingsMouse = true;
     }
 
-    int nextHover = HitTestSettingsDialogControl(hwnd, pt);
+    int nextHover = HitTestSettingsTitleControl(pt);
+    if (nextHover == HoverNone) {
+        nextHover = HitTestSettingsDialogControl(hwnd, pt);
+    }
     if (nextHover == HoverNone && !g_settingsInfoDialogOpen) {
         nextHover = HitTestSettingsTopControl(pt);
     }
@@ -2837,6 +2942,29 @@ void DrawRoundedFill(HDC dc, int x, int y, int w, int h, int radius, COLORREF fi
     graphics.FillPath(&fillBrush, &path);
 
     Gdiplus::Pen borderPen(Gdiplus::Color(255, GetRValue(border), GetGValue(border), GetBValue(border)), 1.0f);
+    graphics.DrawPath(&borderPen, &path);
+}
+
+void DrawRoundedOutline(HDC dc, int x, int y, int w, int h, int radius, COLORREF border, BYTE alpha = 255, float width = 1.0f) {
+    int px = Ui(x);
+    int py = Ui(y);
+    int pw = Ui(w);
+    int ph = Ui(h);
+    int pr = Ui(radius);
+    if (pw <= 0 || ph <= 0) return;
+
+    Gdiplus::Graphics graphics(dc);
+    graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+
+    Gdiplus::GraphicsPath path;
+    AddRoundedRectPath(&path,
+                       static_cast<Gdiplus::REAL>(px) + 0.5f,
+                       static_cast<Gdiplus::REAL>(py) + 0.5f,
+                       static_cast<Gdiplus::REAL>(pw) - 1.0f,
+                       static_cast<Gdiplus::REAL>(ph) - 1.0f,
+                       static_cast<Gdiplus::REAL>(pr));
+    Gdiplus::Pen borderPen(Gdiplus::Color(alpha, GetRValue(border), GetGValue(border), GetBValue(border)), width);
     graphics.DrawPath(&borderPen, &path);
 }
 
@@ -2927,6 +3055,7 @@ bool UsesStrongerRevealFeedback(int control) {
            control == HoverCancel ||
            control == HoverSupport ||
            control == HoverSupporterBadge ||
+           IsSettingsTitleControl(control) ||
            control == HoverSupportDonate ||
            control == HoverSupportActivate ||
            control == HoverSupportCode;
@@ -3255,13 +3384,15 @@ std::wstring HeroStatusText() {
 }
 
 void DrawAppMark(HDC dc, int x, int y) {
-    DrawCircleFill(dc, x, y, 40, g_theme.dark ? Rgb(4, 6, 7) : Rgb(255, 255, 255),
-                   g_theme.dark ? Rgb(36, 43, 48) : Rgb(213, 219, 227));
-    DrawCircleFill(dc, x + 13, y + 10, 5, Rgb(56, 189, 248), Rgb(56, 189, 248));
-    DrawCircleFill(dc, x + 22, y + 10, 5, Rgb(34, 197, 94), Rgb(34, 197, 94));
-    DrawCircleFill(dc, x + 13, y + 19, 5, Rgb(14, 165, 233), Rgb(14, 165, 233));
-    DrawCircleFill(dc, x + 22, y + 19, 5, Rgb(245, 158, 11), Rgb(245, 158, 11));
-    DrawRoundedFill(dc, x + 11, y + 29, 18, 3, 2, Rgb(0, 120, 212), Rgb(0, 120, 212));
+    FillRoundedGradient(dc, x + 1, y + 2, 38, 36, 8,
+                        Rgb(8, 92, 124),
+                        Rgb(28, 184, 255));
+    DrawRoundedAlphaFill(dc, x + 19, y + 5, 3, 30, 2, Rgb(230, 250, 255), 220);
+    DrawCircleFill(dc, x + 27, y + 9, 8, Rgb(255, 244, 142), Rgb(255, 244, 142));
+    DrawRoundedAlphaFill(dc, x + 24, y + 29, 11, 2, 1, Rgb(214, 253, 255), 235);
+    DrawRoundedAlphaFill(dc, x + 6, y + 29, 9, 2, 1, Rgb(8, 75, 96), 150);
+    DrawRoundedOutline(dc, x + 1, y + 2, 38, 36, 8,
+                       g_theme.dark ? Rgb(130, 232, 255) : Rgb(14, 116, 144), 255, 1.8f);
 }
 
 void DrawStatusPill(HDC dc, int x, int y, int w, const std::wstring& text, COLORREF accent) {
@@ -3316,6 +3447,82 @@ void DrawCloseIcon(HDC dc, int x, int y, int size, COLORREF color) {
     int ps = Ui(size);
     graphics.DrawLine(&pen, px, py, px + ps, py + ps);
     graphics.DrawLine(&pen, px + ps, py, px, py + ps);
+}
+
+void DrawMinimizeIcon(HDC dc, int x, int y, int width, COLORREF color) {
+    Gdiplus::Graphics graphics(dc);
+    graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    Gdiplus::Pen pen(GdiColor(color), 1.8f);
+    pen.SetStartCap(Gdiplus::LineCapRound);
+    pen.SetEndCap(Gdiplus::LineCapRound);
+
+    int px = Ui(x);
+    int py = Ui(y);
+    int pw = Ui(width);
+    graphics.DrawLine(&pen, px, py, px + pw, py);
+}
+
+void DrawQuestionIcon(HDC dc, int x, int y, COLORREF color) {
+    DrawCircleFill(dc, x, y, 18, g_theme.dark ? Rgb(10, 12, 14) : Rgb(255, 255, 255),
+                   BlendColor(color, g_theme.window, 44));
+    RECT rect = UiBox(x, y - 1, 18, 18);
+    DrawTextLine(dc, L"?", rect, g_smallFont, color,
+                 DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+}
+
+void DrawGithubIcon(HDC dc, int x, int y, int size, COLORREF color) {
+    Gdiplus::Graphics graphics(dc);
+    graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+
+    const Gdiplus::REAL px = static_cast<Gdiplus::REAL>(Ui(x));
+    const Gdiplus::REAL py = static_cast<Gdiplus::REAL>(Ui(y));
+    const Gdiplus::REAL scale = static_cast<Gdiplus::REAL>(Ui(size)) / 16.0f;
+    auto p = [&](Gdiplus::REAL vx, Gdiplus::REAL vy) {
+        return Gdiplus::PointF(px + vx * scale, py + vy * scale);
+    };
+
+    Gdiplus::GraphicsPath path;
+    Gdiplus::REAL cx = 8.0f;
+    Gdiplus::REAL cy = 0.0f;
+    path.StartFigure();
+    auto c = [&](Gdiplus::REAL x1, Gdiplus::REAL y1,
+                 Gdiplus::REAL x2, Gdiplus::REAL y2,
+                 Gdiplus::REAL x3, Gdiplus::REAL y3) {
+        path.AddBezier(p(cx, cy), p(x1, y1), p(x2, y2), p(x3, y3));
+        cx = x3;
+        cy = y3;
+    };
+
+    c(3.58f, 0.00f, 0.00f, 3.58f, 0.00f, 8.00f);
+    c(0.00f, 11.54f, 2.29f, 14.53f, 5.47f, 15.59f);
+    c(5.87f, 15.66f, 6.02f, 15.42f, 6.02f, 15.21f);
+    c(6.02f, 15.02f, 6.01f, 14.39f, 6.01f, 13.72f);
+    c(4.00f, 14.09f, 3.48f, 13.23f, 3.32f, 12.78f);
+    c(3.23f, 12.55f, 2.84f, 11.84f, 2.50f, 11.65f);
+    c(2.22f, 11.50f, 1.82f, 11.13f, 2.49f, 11.12f);
+    c(3.12f, 11.11f, 3.57f, 11.70f, 3.72f, 11.94f);
+    c(4.44f, 13.15f, 5.59f, 12.81f, 6.05f, 12.60f);
+    c(6.12f, 12.08f, 6.33f, 11.73f, 6.56f, 11.53f);
+    c(4.78f, 11.33f, 2.92f, 10.64f, 2.92f, 7.58f);
+    c(2.92f, 6.71f, 3.23f, 5.99f, 3.74f, 5.43f);
+    c(3.66f, 5.23f, 3.38f, 4.41f, 3.82f, 3.31f);
+    c(3.82f, 3.31f, 4.49f, 3.10f, 6.02f, 4.13f);
+    c(6.66f, 3.95f, 7.34f, 3.86f, 8.02f, 3.86f);
+    c(8.70f, 3.86f, 9.38f, 3.95f, 10.02f, 4.13f);
+    c(11.55f, 3.09f, 12.22f, 3.31f, 12.22f, 3.31f);
+    c(12.66f, 4.41f, 12.38f, 5.23f, 12.30f, 5.43f);
+    c(12.81f, 5.99f, 13.12f, 6.70f, 13.12f, 7.58f);
+    c(13.12f, 10.65f, 11.25f, 11.33f, 9.47f, 11.53f);
+    c(9.76f, 11.78f, 10.01f, 12.26f, 10.01f, 13.01f);
+    c(10.01f, 14.08f, 10.00f, 14.94f, 10.00f, 15.21f);
+    c(10.00f, 15.42f, 10.15f, 15.67f, 10.55f, 15.59f);
+    c(13.81f, 14.49f, 16.00f, 11.44f, 16.00f, 8.00f);
+    c(16.00f, 3.58f, 12.42f, 0.00f, 8.00f, 0.00f);
+    path.CloseFigure();
+
+    Gdiplus::SolidBrush brush(GdiColor(color));
+    graphics.FillPath(&brush, &path);
 }
 
 void DrawPlusMinusIcon(HDC dc, int x, int y, int size, bool plus, COLORREF color) {
@@ -4131,7 +4338,7 @@ void UpdateHdrPreviewWindow(HWND hwnd) {
     bool shouldShow = fullyVisible && !g_settingsInfoDialogOpen && !IsIconic(hwnd);
 
     int px = Ui(rightX);
-    int py = Ui(visibleY);
+    int py = Ui(kSettingsTitleBarHeight + visibleY);
     int pw = Ui(imageW);
     int ph = Ui(imageH);
     SetWindowPos(g_hdrPreviewWindow, HWND_TOP, px, py, pw, ph,
@@ -4362,6 +4569,107 @@ void DrawSupporterTooltip(HDC dc, int x, int y) {
                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
+void DrawSettingsTitleButton(HDC dc, int control) {
+    const int x = SettingsTitleButtonX(control);
+    const int y = 5;
+    int amount = std::max(InteractionPercent(control), IsHover(control) ? 1 : 0);
+    bool pressed = g_pressedControl == control;
+    COLORREF icon = g_theme.mutedText;
+
+    if (control == HoverTitleClose && (amount > 0 || pressed)) {
+        COLORREF fill = pressed ? Rgb(196, 43, 28) : Rgb(232, 17, 35);
+        DrawRoundedAlphaFill(dc, x, y, 38, 34, 8, fill, 232);
+        icon = Rgb(255, 255, 255);
+    } else if (amount > 0 || pressed) {
+        COLORREF fill = pressed ? BlendColor(g_theme.controlHover, Rgb(0, 0, 0), g_theme.dark ? 10 : 4)
+                                : BlendColor(g_theme.control, g_theme.controlHover, 72);
+        DrawLiquidGlassPanel(dc, x, y, 38, 34, 8, fill, fill, control);
+        icon = g_theme.titleText;
+    }
+
+    int offset = pressed ? 1 : 0;
+    switch (control) {
+    case HoverTitleHelp:
+        DrawQuestionIcon(dc, x + 10, y + 8 + offset, icon);
+        break;
+    case HoverTitleGithub:
+        DrawGithubIcon(dc, x + 10, y + 8 + offset, 18, icon);
+        break;
+    case HoverTitleMinimize:
+        DrawMinimizeIcon(dc, x + 14, y + 17 + offset, 10, icon);
+        break;
+    case HoverTitleClose:
+        DrawCloseIcon(dc, x + 14, y + 12 + offset, 10, icon);
+        break;
+    }
+}
+
+const wchar_t* SettingsTitleTooltipText(int control) {
+    int language = CurrentUiLanguage();
+    bool simplified = language == LangChinese;
+    bool traditional = language == LangChineseTraditional;
+
+    switch (control) {
+    case HoverTitleHelp:
+        if (simplified) return L"查看帮助";
+        if (traditional) return L"查看說明";
+        return L"View help";
+    case HoverTitleGithub:
+        if (simplified || traditional) return L"访问 GitHub";
+        return L"Visit GitHub";
+    case HoverTitleMinimize:
+        if (simplified) return L"最小化";
+        if (traditional) return L"最小化";
+        return L"Minimize";
+    case HoverTitleClose:
+        if (simplified) return L"关闭";
+        if (traditional) return L"關閉";
+        return L"Close";
+    default:
+        return L"";
+    }
+}
+
+void DrawSettingsTitleTooltip(HDC dc) {
+    if (!IsSettingsTitleControl(g_hoverControl) || g_pressedControl == g_hoverControl) return;
+
+    const wchar_t* text = SettingsTitleTooltipText(g_hoverControl);
+    if (!text || !text[0]) return;
+
+    int textW = TextWidthLogical(dc, text, g_smallFont);
+    int w = ClampInt(textW + 24, 70, 136);
+    int h = 28;
+    int buttonX = SettingsTitleButtonX(g_hoverControl);
+    int x = ClampInt(buttonX + 19 - w / 2, 8, kSettingsClientWidth - w - 8);
+    int y = kSettingsTitleBarHeight + 6;
+
+    DrawRoundedAlphaFill(dc, x + 2, y + 3, w, h, 7, Rgb(0, 0, 0), g_theme.dark ? 92 : 36);
+    DrawRoundedFill(dc, x, y, w, h, 7,
+                    g_theme.dark ? Rgb(34, 37, 40) : Rgb(255, 255, 255),
+                    g_theme.dark ? Rgb(84, 88, 94) : Rgb(203, 213, 225));
+    RECT rect = UiBox(x + 12, y, w - 24, h);
+    DrawTextLine(dc, text, rect, g_smallFont, g_theme.titleText,
+                 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+
+void DrawSettingsTitleBar(HWND hwnd, HDC dc) {
+    (void)hwnd;
+    RECT titleBar = UiBox(0, 0, kSettingsClientWidth, kSettingsTitleBarHeight);
+    FillRect(dc, &titleBar, g_windowBrush);
+    DrawRoundedAlphaFill(dc, 0, kSettingsTitleBarHeight - 1, kSettingsClientWidth, 1, 1,
+                         g_theme.dark ? Rgb(255, 255, 255) : Rgb(0, 0, 0),
+                         g_theme.dark ? 18 : 16);
+
+    RECT title = UiBox(16, 0, 330, kSettingsTitleBarHeight);
+    DrawTextLine(dc, T(TxtSettingsTitle), title, g_smallFont, g_theme.mutedText,
+                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    DrawSettingsTitleButton(dc, HoverTitleHelp);
+    DrawSettingsTitleButton(dc, HoverTitleGithub);
+    DrawSettingsTitleButton(dc, HoverTitleMinimize);
+    DrawSettingsTitleButton(dc, HoverTitleClose);
+}
+
 void DrawSettingsFooter(HDC dc, int visibleHeight) {
     int footerTop = visibleHeight - kSettingsFooterAreaHeight;
     RECT footerRect = UiBox(0, footerTop, kSettingsClientWidth, kSettingsFooterAreaHeight);
@@ -4401,10 +4709,8 @@ void DrawInfoIcon(HDC dc, int x, int y) {
 void DrawSettingsInfoDialog(HDC dc, HWND hwnd) {
     if (!g_settingsInfoDialogOpen) return;
 
-    RECT client = {};
-    GetClientRect(hwnd, &client);
     int dialogAmount = std::max(260, g_settingsDialogAnim);
-    DrawRoundedAlphaFill(dc, 0, 0, FromUi(client.right - client.left), FromUi(client.bottom - client.top), 0,
+    DrawRoundedAlphaFill(dc, 0, 0, kSettingsClientWidth, SettingsContentClientHeight(hwnd), 0,
                          Rgb(0, 0, 0), AlphaScale(g_theme.dark ? 118 : 72, dialogAmount));
 
     RECT box = SettingsDialogBox(hwnd);
@@ -5171,8 +5477,12 @@ void DrawSettingsChrome(HWND hwnd, HDC dc) {
     RECT client = {};
     GetClientRect(hwnd, &client);
     FillRect(dc, &client, g_windowBrush);
+    DrawSettingsTitleBar(hwnd, dc);
 
-    int visibleHeight = FromUi(client.bottom - client.top);
+    POINT contentOrigin = {};
+    SetViewportOrgEx(dc, 0, Ui(kSettingsTitleBarHeight), &contentOrigin);
+
+    int visibleHeight = SettingsContentClientHeight(hwnd);
     DrawWindowGlassBackdrop(dc, visibleHeight);
     const int sectionX = 56;
     const int rowX = 64;
@@ -5185,7 +5495,7 @@ void DrawSettingsChrome(HWND hwnd, HDC dc) {
 
     POINT oldOrigin = {};
     int appearOffset = (1000 - ClampInt(g_settingsWindowAnim, 0, 1000)) / 80;
-    SetViewportOrgEx(dc, 0, -Ui(g_settingsScrollY) + Ui(appearOffset), &oldOrigin);
+    SetViewportOrgEx(dc, 0, Ui(kSettingsTitleBarHeight) - Ui(g_settingsScrollY) + Ui(appearOffset), &oldOrigin);
 
     DrawAppMark(dc, layout.headerIconX, layout.headerIconY);
     RECT title = UiBox(layout.headerTitleX, layout.headerTitleY, 500, 30);
@@ -5282,6 +5592,8 @@ void DrawSettingsChrome(HWND hwnd, HDC dc) {
         DrawSupporterTooltip(dc, 408, 66);
     }
     DrawSettingsInfoDialog(dc, hwnd);
+    SetViewportOrgEx(dc, contentOrigin.x, contentOrigin.y, NULL);
+    DrawSettingsTitleTooltip(dc);
 }
 
 void ApplySettingsDraft(HWND hwnd, bool closeWindow) {
@@ -5524,6 +5836,13 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         InvalidateRect(hwnd, NULL, TRUE);
         return 0;
     }
+    case WM_NCHITTEST: {
+        POINT pt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        ScreenToClient(hwnd, &pt);
+        if (HitTestSettingsTitleControl(pt) != HoverNone) return HTCLIENT;
+        if (pt.y >= 0 && pt.y < Ui(kSettingsTitleBarHeight)) return HTCAPTION;
+        return HTCLIENT;
+    }
     case WM_ERASEBKGND:
         return 1;
     case WM_PAINT: {
@@ -5572,6 +5891,13 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         }
         POINT pt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         UpdateSettingsHover(hwnd, pt);
+        int titleHover = HitTestSettingsTitleControl(pt);
+        if (titleHover != HoverNone) {
+            g_pressedControl = titleHover;
+            ArmSettingsAnimationTimer(hwnd);
+            InvalidateRect(hwnd, NULL, FALSE);
+            return 0;
+        }
         if (g_settingsInfoDialogOpen) {
             int dialogHover = HitTestSettingsDialogControl(hwnd, pt);
             if (dialogHover == HoverDialogOk || dialogHover == HoverDialogClose || dialogHover == HoverDialogLink) {
@@ -5672,7 +5998,9 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
             POINT pt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             int pressed = g_pressedControl;
             int released = HoverNone;
-            if (pressed >= HoverDialogOk) {
+            if (IsSettingsTitleControl(pressed)) {
+                released = HitTestSettingsTitleControl(pt);
+            } else if (pressed >= HoverDialogOk) {
                 released = HitTestSettingsDialogControl(hwnd, pt);
             } else if (pressed == HoverSupport) {
                 released = HitTestSettingsTopControl(pt);
@@ -5683,7 +6011,13 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
             ArmSettingsAnimationTimer(hwnd);
             InvalidateRect(hwnd, NULL, FALSE);
             if (pressed == released) {
-                if (pressed == HoverDialogOk || pressed == HoverDialogClose) {
+                if (pressed == HoverTitleHelp || pressed == HoverTitleGithub) {
+                    OpenGithubRepository(hwnd);
+                } else if (pressed == HoverTitleMinimize) {
+                    ShowWindow(hwnd, SW_MINIMIZE);
+                } else if (pressed == HoverTitleClose) {
+                    DestroyWindow(hwnd);
+                } else if (pressed == HoverDialogOk || pressed == HoverDialogClose) {
                     CloseSettingsInfoDialog(hwnd);
                 } else if (pressed == HoverDialogLink) {
                     OpenNightLightSettings(hwnd);
@@ -5804,8 +6138,8 @@ void ShowSettingsWindow(HWND owner) {
     wc.lpszClassName = L"HdrSdrBrightnessSettingsWindow";
     RegisterClassExW(&wc);
 
-    DWORD style = WS_CAPTION | WS_SYSMENU | WS_VISIBLE;
-    DWORD exStyle = WS_EX_DLGMODALFRAME;
+    DWORD style = WS_POPUP | WS_SYSMENU | WS_MINIMIZEBOX | WS_VISIBLE;
+    DWORD exStyle = 0;
     LoadConfig(true);
     Config previewConfig = g_config;
     bool canFollow = CanFollowWindowsNightLight();
@@ -5814,7 +6148,8 @@ void ShowSettingsWindow(HWND owner) {
     }
     SettingsLayout layout = BuildSettingsLayout(previewConfig.followNightLight && canFollow);
     int visibleHeight = SettingsVisibleClientHeight(layout.clientHeight, style, exStyle);
-    SIZE windowSize = WindowSizeForClient(style, exStyle, Ui(kSettingsClientWidth), Ui(visibleHeight));
+    SIZE windowSize = WindowSizeForClient(style, exStyle, Ui(kSettingsClientWidth),
+                                          Ui(visibleHeight + kSettingsTitleBarHeight));
 
     g_settingsWindow = CreateWindowExW(exStyle, wc.lpszClassName, T(TxtSettingsTitle),
                                        style,
@@ -5824,7 +6159,8 @@ void ShowSettingsWindow(HWND owner) {
         RefreshUiDpi(g_settingsWindow);
         layout = BuildSettingsLayout(previewConfig.followNightLight && canFollow);
         visibleHeight = SettingsVisibleClientHeight(layout.clientHeight, style, exStyle);
-        windowSize = WindowSizeForClient(style, exStyle, Ui(kSettingsClientWidth), Ui(visibleHeight));
+        windowSize = WindowSizeForClient(style, exStyle, Ui(kSettingsClientWidth),
+                                         Ui(visibleHeight + kSettingsTitleBarHeight));
     }
     CenterWindow(g_settingsWindow, windowSize.cx, windowSize.cy);
     ShowWindow(g_settingsWindow, SW_SHOW);
