@@ -14,7 +14,7 @@ It is useful for OLED, QD-OLED, MiniLED, HDR monitors, HDR TVs, and HDR-capable 
 
 Download the latest release from [GitHub Releases](https://github.com/yinjunonly/hdr-sdr-brightness/releases/latest).
 
-Use the `HdrSdrBrightness-1.0.2-win64.zip` package, extract it, and run `HdrSdrBrightness.exe`.
+Use the `HdrSdrBrightness-1.0.3-win64.zip` package, extract it, and run `HdrSdrBrightness.exe`.
 
 ### Use
 
@@ -78,6 +78,8 @@ Start with Windows uses:
 ```text
 HKCU\Software\Microsoft\Windows\CurrentVersion\Run\HdrSdrBrightness
 ```
+
+When Windows allows it, the app also creates a current-user logon scheduled task for earlier startup. The Run entry is kept as a fallback.
 
 No administrator privileges are required.
 
@@ -147,7 +149,7 @@ SDR white level
 
 请从 [GitHub Releases](https://github.com/yinjunonly/hdr-sdr-brightness/releases/latest) 下载最新版。
 
-下载 `HdrSdrBrightness-1.0.2-win64.zip`，解压后运行 `HdrSdrBrightness.exe`。
+下载 `HdrSdrBrightness-1.0.3-win64.zip`，解压后运行 `HdrSdrBrightness.exe`。
 
 ### 使用
 
@@ -211,6 +213,8 @@ HKCU\Software\OledHdrSdrSync
 ```text
 HKCU\Software\Microsoft\Windows\CurrentVersion\Run\HdrSdrBrightness
 ```
+
+当 Windows 允许时，程序也会创建当前用户的登录计划任务，以便更早启动；Run 项会保留作为兜底。
 
 不需要管理员权限。
 

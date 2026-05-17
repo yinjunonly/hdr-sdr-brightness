@@ -27,6 +27,7 @@ const wchar_t kDisplayName[] = L"HDR SDR Brightness";
 const wchar_t kAppUserModelId[] = L"HdrSdrBrightness.Desktop";
 const wchar_t kConfigKey[] = L"Software\\OledHdrSdrSync";
 const wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+const wchar_t kStartupTaskName[] = L"HdrSdrBrightness";
 const int IDI_APPICON = 101;
 
 const UINT kTrayMessage = WM_APP + 1;
@@ -517,6 +518,63 @@ std::wstring QuotePath(const std::wstring& path) {
     return L"\"" + path + L"\"";
 }
 
+std::wstring QuoteCommandLineArgument(const std::wstring& value) {
+    std::wstring quoted;
+    quoted.reserve(value.size() + 2);
+    quoted.push_back(L'"');
+
+    size_t backslashes = 0;
+    for (size_t i = 0; i < value.size(); ++i) {
+        wchar_t ch = value[i];
+        if (ch == L'\\') {
+            ++backslashes;
+            continue;
+        }
+
+        if (ch == L'"') {
+            quoted.append(backslashes * 2 + 1, L'\\');
+            quoted.push_back(ch);
+            backslashes = 0;
+            continue;
+        }
+
+        quoted.append(backslashes, L'\\');
+        backslashes = 0;
+        quoted.push_back(ch);
+    }
+
+    quoted.append(backslashes * 2, L'\\');
+    quoted.push_back(L'"');
+    return quoted;
+}
+
+bool RunHiddenCommand(const std::wstring& commandLine, DWORD timeoutMs) {
+    STARTUPINFOW si = {};
+    PROCESS_INFORMATION pi = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+
+    std::vector<wchar_t> mutableCommand(commandLine.begin(), commandLine.end());
+    mutableCommand.push_back(L'\0');
+
+    BOOL created = CreateProcessW(NULL, mutableCommand.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW,
+                                  NULL, NULL, &si, &pi);
+    if (!created) return false;
+
+    DWORD wait = WaitForSingleObject(pi.hProcess, timeoutMs);
+    DWORD exitCode = 1;
+    if (wait == WAIT_OBJECT_0) {
+        GetExitCodeProcess(pi.hProcess, &exitCode);
+    } else {
+        TerminateProcess(pi.hProcess, 1);
+    }
+
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return wait == WAIT_OBJECT_0 && exitCode == 0;
+}
+
 bool IsBackgroundLaunchArgument(const wchar_t* arg) {
     if (!arg) return false;
     return lstrcmpiW(arg, L"--background") == 0 ||
@@ -602,7 +660,7 @@ bool ReadBinaryValue(HKEY root, const wchar_t* keyPath, const wchar_t* valueName
     return true;
 }
 
-bool IsStartupEnabled() {
+bool IsRunKeyStartupEnabled() {
     HKEY key = NULL;
     LONG rc = RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_READ, &key);
     if (rc != ERROR_SUCCESS) return false;
@@ -628,6 +686,52 @@ bool IsStartupEnabled() {
     rc = RegQueryValueExW(key, kLegacyOledAppName, NULL, &type, NULL, &size);
     RegCloseKey(key);
     return rc == ERROR_SUCCESS && (type == REG_SZ || type == REG_EXPAND_SZ) && size > 0;
+}
+
+void SetRunKeyStartupEnabled(bool enabled) {
+    HKEY key = NULL;
+    LONG rc = RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, NULL, 0, KEY_SET_VALUE, NULL, &key, NULL);
+    if (rc != ERROR_SUCCESS) return;
+
+    if (enabled) {
+        std::wstring command = QuotePath(GetExePath()) + L" --background";
+        RegSetValueExW(key, kAppName, 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()),
+                       static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
+        RegDeleteValueW(key, kLegacySyncAppName);
+        RegDeleteValueW(key, kLegacyOledAppName);
+    } else {
+        RegDeleteValueW(key, kAppName);
+        RegDeleteValueW(key, kLegacySyncAppName);
+        RegDeleteValueW(key, kLegacyOledAppName);
+    }
+
+    RegCloseKey(key);
+}
+
+bool IsScheduledTaskStartupEnabled() {
+    std::wstring command = L"schtasks.exe /Query /TN " + QuoteCommandLineArgument(kStartupTaskName);
+    return RunHiddenCommand(command, 3000);
+}
+
+bool DeleteScheduledTaskStartup() {
+    if (!IsScheduledTaskStartupEnabled()) return true;
+    std::wstring command = L"schtasks.exe /Delete /TN " + QuoteCommandLineArgument(kStartupTaskName) + L" /F";
+    return RunHiddenCommand(command, 5000);
+}
+
+bool SetScheduledTaskStartupEnabled(bool enabled) {
+    if (!enabled) return DeleteScheduledTaskStartup();
+
+    std::wstring action = QuoteCommandLineArgument(GetExePath()) + L" --background";
+    std::wstring command =
+        L"schtasks.exe /Create /TN " + QuoteCommandLineArgument(kStartupTaskName) +
+        L" /SC ONLOGON /TR " + QuoteCommandLineArgument(action) +
+        L" /RL LIMITED /F";
+    return RunHiddenCommand(command, 5000);
+}
+
+bool IsStartupEnabled() {
+    return IsScheduledTaskStartupEnabled() || IsRunKeyStartupEnabled();
 }
 
 bool FileExists(const std::wstring& path) {
@@ -778,23 +882,13 @@ MaybeBool ReadNightLightActiveViaCloudReader() {
 }
 
 void SetStartupEnabled(bool enabled) {
-    HKEY key = NULL;
-    LONG rc = RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, NULL, 0, KEY_SET_VALUE, NULL, &key, NULL);
-    if (rc != ERROR_SUCCESS) return;
-
     if (enabled) {
-        std::wstring command = QuotePath(GetExePath()) + L" --background";
-        RegSetValueExW(key, kAppName, 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()),
-                       static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
-        RegDeleteValueW(key, kLegacySyncAppName);
-        RegDeleteValueW(key, kLegacyOledAppName);
+        SetScheduledTaskStartupEnabled(true);
+        SetRunKeyStartupEnabled(true);
     } else {
-        RegDeleteValueW(key, kAppName);
-        RegDeleteValueW(key, kLegacySyncAppName);
-        RegDeleteValueW(key, kLegacyOledAppName);
+        SetScheduledTaskStartupEnabled(false);
+        SetRunKeyStartupEnabled(false);
     }
-
-    RegCloseKey(key);
 }
 
 void LoadConfig() {
