@@ -8,7 +8,10 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $bin = Join-Path $root 'bin'
 $obj = Join-Path $root 'obj'
-$src = Join-Path $root 'src\main.cpp'
+$sources = @(
+    (Join-Path $root 'src\main.cpp'),
+    (Join-Path $root 'src\localization.cpp')
+)
 $res = Join-Path $root 'res\app.rc'
 $resObj = Join-Path $obj 'app.res.o'
 $versionFile = Join-Path $root 'VERSION'
@@ -104,7 +107,7 @@ $versionHeaderContent = @"
         exit $LASTEXITCODE
     }
 
-    & $gpp $src $resObj `
+    & $gpp $sources $resObj `
         -std=gnu++11 `
         -O2 `
         -mwindows `

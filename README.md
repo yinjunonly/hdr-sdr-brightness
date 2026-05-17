@@ -4,96 +4,120 @@
 
 ## English
 
-![1778953908860](image/README/1778953908860.png)
+**HDR SDR Brightness** is a lightweight Windows tray app for keeping **SDR content brightness** predictable when Windows HDR is enabled.
 
-A minimal Windows tray utility that automatically adjusts **Windows SDR content brightness** while HDR is enabled.
+It is built for OLED, QD-OLED, MiniLED, HDR monitors, HDR TVs, and HDR laptop panels where regular SDR apps may look too bright, too dim, or washed out after HDR is turned on.
 
-It is useful for OLED, QD-OLED, MiniLED, HDR monitors, HDR TVs, and HDR-capable laptop displays where SDR apps become too bright, too dim, or washed out after enabling Windows HDR.
+![HDR SDR Brightness settings window](image/README/settings-1.0.5-en.png)
 
 ### Download
 
 Download the latest release from [GitHub Releases](https://github.com/yinjunonly/hdr-sdr-brightness/releases/latest).
 
-Use the `HdrSdrBrightness-1.0.4-win64.zip` package, extract it, and run `HdrSdrBrightness.exe`.
+Use the Windows x64 package:
 
-### Use
+```text
+HdrSdrBrightness-1.0.5-win64.zip
+```
 
-Run `HdrSdrBrightness.exe`; the settings window opens and the app also stays in the system tray.
+Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no installer, no service, and no administrator privileges are required.
 
-Use `HdrSdrBrightness.exe --background` for a quiet tray-only launch. Start with Windows uses this mode.
+### What It Does
 
-Tray menu:
+- Applies your preferred Windows SDR content brightness while HDR is active.
+- Supports separate **Day** and **Night** SDR brightness levels.
+- Can follow **Windows Night Light**, or use a built-in fallback schedule.
+- Restores the configured SDR brightness if a manual change is detected.
+- Provides a live SDR/HDR preview in the settings window.
+- Runs quietly from the system tray and can start with Windows.
+- Supports Auto, Simplified Chinese, Traditional Chinese, English, Korean, Japanese, Russian, and German.
 
-- Apply now
-- Settings: language, SDR content brightness, fallback schedule, startup
-- Start with Windows
-- Open Display settings
-- Exit
+### Recommended Defaults
 
-### Default Behavior
+| Setting | Default |
+| --- | --- |
+| Day SDR content brightness | `25%` |
+| Night SDR content brightness | `10%` |
+| Switching mode | Follow Windows Night Light when available |
+| Fallback schedule | Night starts at `18:00`, day starts at `08:00` |
+| Restore manual changes | On |
 
-- Night SDR content brightness: `10`
-- Day SDR content brightness: `25`
-- Switching mode: follow Windows Night Light when available, otherwise use the default schedule
-- Default schedule: night starts at `18:00`, day starts at `08:00`
-- Applies the correct SDR content brightness immediately on startup
-- Checks manual SDR brightness changes every 15 seconds and restores the configured value
-- Shows a system notification when restoring a manual change
-- Applies brightness changes gradually in both directions
-- Manual-change restore can be disabled in Settings
-- Clicking the restore notification opens a detail dialog
+These values are only starting points. Tune them for your panel, room lighting, and preferred SDR white level.
 
-### Performance
+### Tray Usage
 
-![Performance snapshot](image/README/performance-1.0.2.png)
+Run `HdrSdrBrightness.exe` to open Settings and keep the app in the tray.
 
-Idle tray-mode sample on one Windows machine over 45 seconds:
+Run `HdrSdrBrightness.exe --background` for tray-only startup. This is the mode used by Start with Windows.
 
-- Average CPU: `0.003%`
-- Peak CPU: `0.129%`
-- Working set: `23.0 MB`
-- Private memory: `7.4 MB`
+The tray menu includes Apply now, Settings, Start with Windows, Display settings, Night Light settings, Support author, and Exit.
 
-Actual values may vary by display count, HDR state, Windows build, and hardware.
+### Support The Author
 
-### UI And Icon
+If this app improves your HDR setup, you can support development on Afdian:
 
-- English and Chinese UI with automatic language detection
-- Light and dark modes follow the Windows app theme
-- Custom-drawn Windows Settings-style surface with cards, switches, sliders, segmented controls, and hover states
-- GDI+ antialiasing for rounded controls
-- Tray hover shows a compact live summary: mode, target SDR content brightness, HDR display status, and auto-restore state
-- Tray icon is optimized for small sizes with a high-contrast abstract mark
+```text
+https://afdian.com/a/injunaid/plan
+```
 
-### Notes
+The settings window and tray menu include a **Support author** entry. Supporter codes are checked locally and only show a small supporter badge. They are not a license system; the app remains fully usable without one.
 
-Configuration is stored under the current user:
+### Background Performance
+
+![Background idle performance profile](image/README/performance-1.0.5.png)
+
+Measured with the settings window closed and the app running in `--background` tray mode:
+
+| Metric | Result |
+| --- | ---: |
+| Sample duration | 60 seconds |
+| Average CPU | 0.0000% |
+| Peak CPU | 0.0000% |
+| Average working set | 13.8 MB |
+| Peak working set | 13.8 MB |
+| Average private memory | 3.0 MB |
+| Peak private memory | 3.0 MB |
+| Average handles | 195 |
+| Average threads | 5 |
+
+Sampling method: 1 second process samples after a 5 second warm-up. CPU is calculated from `TotalProcessorTime` deltas and normalized across 12 logical processors. Actual values can vary by display count, HDR state, Windows build, GPU driver, and hardware.
+
+The background path is designed to stay quiet:
+
+- Settings UI resources are loaded only while Settings is open.
+- Animation timers are started on demand and stopped when idle.
+- Startup state is not queried in the 15 second brightness correction path.
+- Windows Night Light state is cached and refreshed through registry notifications.
+
+### Privacy And Startup
+
+Configuration is stored for the current Windows user:
 
 ```text
 HKCU\Software\OledHdrSdrSync
 ```
 
-Start with Windows uses:
+Start with Windows uses the current-user Run key:
 
 ```text
 HKCU\Software\Microsoft\Windows\CurrentVersion\Run\HdrSdrBrightness
 ```
 
-When Windows allows it, the app also creates a current-user logon scheduled task for earlier startup. The Run entry is kept as a fallback.
+The app does not create a service and does not require administrator privileges. When Windows denies scheduled task creation, the current-user Run entry remains the startup path.
 
-No administrator privileges are required.
+Supporter-code validation is local and offline.
 
-### Development Build
+### Build From Source
 
-End users should download the release package instead of building locally.
+Most users should download the release package instead of building locally.
 
-Building from source requires MinGW `g++` and `windres`.
+Building from source requires MinGW `g++` and `windres`:
 
 ```powershell
 .\build.ps1
 ```
 
-The project version is stored in `VERSION`. Release archives are created with:
+Release archives are created with:
 
 ```powershell
 .\package.ps1
@@ -103,9 +127,7 @@ The project version is stored in `VERSION`. Release archives are created with:
 
 MIT License. See [LICENSE](LICENSE).
 
-### Discovery Keywords
-
-People often describe this problem in different ways. These keywords are included to make the project easier to find:
+### Search Keywords
 
 ```text
 Windows HDR SDR brightness
@@ -115,19 +137,10 @@ HDR SDR brightness balance
 HDR/SDR brightness balance
 SDR content brightness slider
 SDR content brightness too bright
-SDR content too bright in HDR
 SDR content too dark in HDR
-Windows HDR too bright
-Windows HDR too dim
 Windows HDR washed out
 Windows 11 HDR washed out
-Windows 10 HDR washed out
 Auto HDR washed out
-HDR desktop too bright
-HDR desktop too dim
-HDR desktop washed out
-HDR colors washed out
-HDR looks washed out
 OLED HDR brightness
 QD-OLED HDR brightness
 MiniLED HDR brightness
@@ -139,96 +152,120 @@ SDR white level
 
 ## 中文
 
-![1778953360969](image/README/1778953360969.png)
+**HDR SDR 亮度助手** 是一个轻量的 Windows 托盘工具，用来在开启 Windows HDR 时，让 **SDR 内容亮度** 保持稳定、舒适、可预期。
 
-一个极简 Windows 托盘工具，用来在开启 HDR 时自动调整 **Windows SDR 内容亮度**。
+它适合 OLED、QD-OLED、MiniLED、HDR 显示器、HDR 电视和支持 HDR 的笔记本屏幕。开启 HDR 后，如果普通 SDR 软件看起来过亮、过暗或发灰，可以用它自动切换和修正 SDR 内容亮度。
 
-适用于 OLED、QD-OLED、MiniLED、HDR 显示器、HDR 电视和支持 HDR 的笔记本屏幕，用来缓解开启 Windows HDR 后 SDR 应用过亮、过暗或发灰的问题。
+![HDR SDR 亮度助手设置窗口](image/README/settings-1.0.5-zh.png)
 
 ### 下载
 
 请从 [GitHub Releases](https://github.com/yinjunonly/hdr-sdr-brightness/releases/latest) 下载最新版。
 
-下载 `HdrSdrBrightness-1.0.4-win64.zip`，解压后运行 `HdrSdrBrightness.exe`。
+Windows x64 用户下载：
 
-### 使用
+```text
+HdrSdrBrightness-1.0.5-win64.zip
+```
 
-运行 `HdrSdrBrightness.exe` 会打开设置页，同时程序也会留在系统托盘。
+解压后运行 `HdrSdrBrightness.exe`。这是便携程序：不需要安装，不创建服务，也不需要管理员权限。
 
-如需安静地只进托盘，可使用 `HdrSdrBrightness.exe --background`；开机自启会使用这个模式。
+### 它能做什么
 
-托盘菜单：
+- HDR 开启时自动应用你设定的 Windows SDR 内容亮度。
+- 支持单独设置 **白天** 和 **夜间** SDR 内容亮度。
+- 可以跟随 **Windows 夜间模式**，也可以使用内置默认时段。
+- 检测到手动修改 SDR 内容亮度后，可以自动恢复到配置值。
+- 设置页提供 SDR/HDR 实时预览。
+- 常驻系统托盘，并支持开机后安静启动。
+- 支持自动、简体中文、繁体中文、English、한국어、日本語、Русский、Deutsch。
 
-- 立即应用
-- 设置：语言、SDR 内容亮度、默认时段、开机自启
-- 开机自启
-- 打开显示设置
-- 退出
+### 推荐默认值
 
-### 默认行为
+| 设置 | 默认值 |
+| --- | --- |
+| 白天 SDR 内容亮度 | `25%` |
+| 夜间 SDR 内容亮度 | `10%` |
+| 切换方式 | 优先跟随 Windows 夜间模式 |
+| 默认时段 | `18:00` 进入夜间，`08:00` 进入白天 |
+| 自动纠正手动调整 | 开启 |
 
-- 夜间 SDR 内容亮度：`10`
-- 白天 SDR 内容亮度：`25`
-- 切换方式：可用时跟随 Windows 夜间模式，否则使用默认时段
-- 默认时段：`18:00` 进入夜间，`08:00` 进入白天
-- 启动后立即应用当前时段的 SDR 内容亮度
-- 每 15 秒检查一次手动修改，并恢复到配置值
-- 恢复手动修改时显示系统通知
-- 调高或调低都会平滑渐变
-- 可以在设置中关闭“自动纠正手动调整”
-- 点击恢复通知会打开详情弹框
+这些只是起点。你可以根据屏幕类型、房间光线和自己习惯的 SDR 白点继续调整。
 
-### 性能占用
+### 托盘使用
 
-![性能快照](image/README/performance-1.0.2.png)
+运行 `HdrSdrBrightness.exe` 会打开设置页，同时程序留在系统托盘。
 
-在一台 Windows 机器上以托盘空闲状态采样 45 秒：
+运行 `HdrSdrBrightness.exe --background` 会只进入托盘；开机自启使用这个模式。
 
-- 平均 CPU：`0.003%`
-- 峰值 CPU：`0.129%`
-- 工作集内存：`23.0 MB`
-- 私有内存：`7.4 MB`
+托盘菜单包含：立即应用、设置、开机自启、打开显示设置、打开夜间模式设置、支持作者、退出。
 
-实际占用会随显示器数量、HDR 状态、Windows 版本和硬件有所变化。
+### 支持作者
 
-### 界面与图标
+如果这个工具改善了你的 HDR 使用体验，可以通过爱发电支持作者：
 
-- 支持中文和英文界面，默认自动跟随系统语言
-- 浅色和深色模式跟随 Windows 应用主题
-- 设置页使用自绘的 Windows 设置风格界面：卡片、开关、滑杆、分段控件和悬停效果
-- 圆角控件使用 GDI+ 抗锯齿绘制
-- 托盘悬停会显示当前模式、目标 SDR 内容亮度、HDR 显示器状态和自动纠正状态
-- 托盘图标已改为适合小尺寸识别的高对比抽象图形
+```text
+https://afdian.com/a/injunaid/plan
+```
 
-### 说明
+设置页和托盘菜单里都有 **支持作者** 入口。支持者码只在本地离线校验，用来显示一个小徽章；它不是授权系统，不影响软件正常使用。
 
-程序使用当前用户注册表保存配置：
+### 后台性能
+
+![后台空闲性能](image/README/performance-1.0.5.png)
+
+以下数据来自设置窗口关闭、程序以 `--background` 托盘模式运行时的采样：
+
+| 指标 | 结果 |
+| --- | ---: |
+| 采样时长 | 60 秒 |
+| 平均 CPU | 0.0000% |
+| 峰值 CPU | 0.0000% |
+| 平均工作集内存 | 13.8 MB |
+| 峰值工作集内存 | 13.8 MB |
+| 平均私有内存 | 3.0 MB |
+| 峰值私有内存 | 3.0 MB |
+| 平均句柄数 | 195 |
+| 平均线程数 | 5 |
+
+采样方式：预热 5 秒后，每 1 秒读取一次进程数据。CPU 使用进程 `TotalProcessorTime` 增量计算，并按 12 个逻辑处理器归一化。实际占用会随显示器数量、HDR 状态、Windows 版本、显卡驱动和硬件环境变化。
+
+后台路径尽量保持安静：
+
+- 设置页绘制资源只在设置窗口打开时加载。
+- 动画计时器按需启动，空闲后停止。
+- 开机自启状态不会放进每 15 秒亮度检查路径。
+- Windows 夜间模式状态会缓存，并由注册表通知刷新。
+
+### 隐私与自启动
+
+配置保存在当前 Windows 用户注册表：
 
 ```text
 HKCU\Software\OledHdrSdrSync
 ```
 
-开机自启使用：
+开机自启使用当前用户 Run 项：
 
 ```text
 HKCU\Software\Microsoft\Windows\CurrentVersion\Run\HdrSdrBrightness
 ```
 
-当 Windows 允许时，程序也会创建当前用户的登录计划任务，以便更早启动；Run 项会保留作为兜底。
+程序不创建服务，也不需要管理员权限。如果 Windows 拒绝创建计划任务，会继续使用当前用户 Run 项作为启动方式。
 
-不需要管理员权限。
+支持者码为本地离线校验。
 
-### 开发构建
+### 从源码构建
 
-普通用户请优先下载 Release 包，不需要自己构建。
+普通用户建议直接下载 Release 包，不需要自己构建。
 
-从源码构建需要 Windows 上的 MinGW `g++` 和 `windres`。
+从源码构建需要 MinGW `g++` 和 `windres`：
 
 ```powershell
 .\build.ps1
 ```
 
-项目版本号存放在 `VERSION`。生成 Release 压缩包使用：
+生成 Release 压缩包：
 
 ```powershell
 .\package.ps1
@@ -240,8 +277,6 @@ MIT License，详见 [LICENSE](LICENSE)。
 
 ### 搜索关键词
 
-很多用户不会直接搜索软件名，而是会用下面这些问题描述搜索，所以 README 保留这些关键词，方便同类用户发现项目：
-
 ```text
 Windows HDR 自动亮度
 Windows HDR SDR 亮度
@@ -249,8 +284,6 @@ Windows SDR 内容亮度
 Windows SDR 内容亮度滑块
 HDR 下 SDR 内容过亮
 HDR 下 SDR 内容过暗
-HDR 开启后桌面太亮
-HDR 开启后桌面太暗
 HDR 开启后颜色发灰
 HDR 发灰
 HDR 洗白
@@ -258,8 +291,7 @@ Auto HDR 发灰
 OLED HDR 太亮
 OLED HDR 太暗
 QD-OLED HDR 亮度
-MiniLED HDR 太亮
-MiniLED HDR 太暗
+MiniLED HDR 亮度
 HDR 显示器 SDR 亮度
 HDR 电视 Windows SDR 亮度
 Windows 夜间模式 SDR 亮度

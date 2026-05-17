@@ -14,3 +14,4 @@
 .vscode/
 Thumbs.db
 desktop.ini
+/tools/generate-supporter-code.ps1
