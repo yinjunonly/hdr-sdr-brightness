@@ -120,9 +120,12 @@ $msixVersion = Convert-ToMsixVersion -Value $Version
 $makeappx = Find-WindowsSdkTool -Name 'makeappx.exe' -RequestedPath $MakeAppxPath
 
 if (-not $SkipBuild) {
-    $buildArgs = @('-Version', $Version, '-Store')
+    $buildArgs = @{
+        Version = $Version
+        Store = $true
+    }
     if ($Clean) {
-        $buildArgs += '-Clean'
+        $buildArgs.Clean = $true
     }
     & (Join-Path $root 'build.ps1') @buildArgs
     if ($LASTEXITCODE -ne 0) {
