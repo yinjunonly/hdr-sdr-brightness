@@ -45,8 +45,8 @@ Small interactions are kept responsive and restrained: buttons and controls reac
 
 | Setting | Default |
 | --- | --- |
-| Day SDR content brightness | `25%` |
-| Night SDR content brightness | `10%` |
+| Day SDR content brightness | `40%` |
+| Night SDR content brightness | `25%` |
 | Switching mode | Follow Windows Night Light when available |
 | Fallback schedule | Night starts at `18:00`, day starts at `08:00` |
 | Restore manual changes | On |
@@ -214,8 +214,8 @@ HDR SDR 亮度助手的设计目标是日常使用足够简单：打开后设置
 
 | 设置 | 默认值 |
 | --- | --- |
-| 白天 SDR 内容亮度 | `25%` |
-| 夜间 SDR 内容亮度 | `10%` |
+| 白天 SDR 内容亮度 | `40%` |
+| 夜间 SDR 内容亮度 | `25%` |
 | 切换方式 | 优先跟随 Windows 夜间模式 |
 | 默认时段 | `18:00` 进入夜间，`08:00` 进入白天 |
 | 自动纠正手动调整 | 开启 |

@@ -301,8 +301,8 @@ struct Config {
     int dayStartMinute;
 
     Config()
-        : dayBrightness(25),
-          nightBrightness(10),
+        : dayBrightness(40),
+          nightBrightness(25),
           followNightLight(true),
           autoRestoreManualChanges(true),
           startWithWindows(false),
