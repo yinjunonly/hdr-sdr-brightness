@@ -104,6 +104,11 @@ enum TextId {
     TxtSupportInvalidCode,
     TxtSupportReminderTitle,
     TxtSupportReminderBody,
+    TxtMenuHdrCalibration,
+    TxtHdrCalibrationTitle,
+    TxtHdrCalibrationLink,
+    TxtHdrCalibrationHint,
+    TxtHdrCalibrationBody,
     TxtTextCount
 };
 

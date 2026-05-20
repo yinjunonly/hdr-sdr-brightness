@@ -17,10 +17,17 @@ Download the latest release from [GitHub Releases](https://github.com/yinjunonly
 Use the Windows x64 package:
 
 ```text
-HdrSdrBrightness-1.0.6-win64.zip
+HdrSdrBrightness-1.0.7-win64.zip
 ```
 
 Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no installer, no service, and no administrator privileges are required.
+
+### What's New In 1.0.7
+
+- Adds Windows HDR Calibration shortcuts from the tray menu and settings window when an HDR display is active.
+- Shows a one-time HDR calibration reminder to help distinguish SDR brightness tuning from display-level HDR calibration.
+- Improves Microsoft Store startup handling by syncing the packaged startup task state back into Settings.
+- Declares localized Store package resources for Simplified Chinese, Traditional Chinese, Korean, Japanese, Russian, and German.
 
 ### What It Does
 
@@ -29,6 +36,7 @@ Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no inst
 - Can follow **Windows Night Light**, or use a built-in fallback schedule.
 - Restores the configured SDR brightness if a manual change is detected.
 - Provides a live SDR/HDR preview in the settings window.
+- Links to Microsoft's Windows HDR Calibration app for display-level HDR calibration.
 - Runs quietly from the system tray and can start with Windows.
 - Follows the Windows light/dark app theme automatically.
 - Supports Auto, Simplified Chinese, Traditional Chinese, English, Korean, Japanese, Russian, and German.
@@ -63,13 +71,15 @@ https://apps.microsoft.com/detail/9n7f2sm5d1lr?hl=en-US&gl=US
 
 Microsoft's calibration app is useful for display-level HDR calibration, while HDR SDR Brightness is focused on day/night SDR content brightness control. They are complementary tools.
 
+When an HDR display is detected, HDR SDR Brightness also provides quick access to Windows HDR Calibration from the tray menu and from the settings window.
+
 ### Tray Usage
 
 Run `HdrSdrBrightness.exe` to open Settings and keep the app in the tray.
 
 Run `HdrSdrBrightness.exe --background` for tray-only startup. This is the mode used by Start with Windows.
 
-The tray menu includes Apply now, Settings, Start with Windows, Display settings, Night Light settings, Support author, and Exit.
+The tray menu includes Apply now, Settings, Start with Windows, Display settings, Night Light settings, Windows HDR Calibration, Support author, and Exit.
 
 ### Support The Author
 
@@ -118,13 +128,15 @@ Configuration is stored for the current Windows user:
 HKCU\Software\OledHdrSdrSync
 ```
 
-Start with Windows uses the current-user Run key:
+In the portable desktop build, Start with Windows uses the current-user Run key:
 
 ```text
 HKCU\Software\Microsoft\Windows\CurrentVersion\Run\HdrSdrBrightness
 ```
 
-The app does not create a service and does not require administrator privileges. When Windows denies scheduled task creation, the current-user Run entry remains the startup path.
+The Microsoft Store build uses the packaged Windows startup task and reflects the current state from Windows Settings > Apps > Startup.
+
+The app does not create a service and does not require administrator privileges. When Windows denies scheduled task creation in the portable build, the current-user Run entry remains the startup path.
 
 Supporter-code validation is local and offline.
 
@@ -142,6 +154,12 @@ Release archives are created with:
 
 ```powershell
 .\package.ps1
+```
+
+Microsoft Store packages are created with:
+
+```powershell
+.\package-msix.ps1 -Version 1.0.7 -Clean
 ```
 
 ### License
@@ -186,10 +204,17 @@ SDR white level
 Windows x64 用户下载：
 
 ```text
-HdrSdrBrightness-1.0.6-win64.zip
+HdrSdrBrightness-1.0.7-win64.zip
 ```
 
 解压后运行 `HdrSdrBrightness.exe`。这是便携程序：不需要安装，不创建服务，也不需要管理员权限。
+
+### 1.0.7 更新内容
+
+- 托盘菜单和设置窗口新增 Windows HDR Calibration 快捷入口，检测到 HDR 显示器后可直接打开。
+- 新增一次性 HDR 校准提醒，帮助区分 SDR 亮度调整和显示器级 HDR 校准。
+- 改进 Microsoft Store 版开机自启处理，会把打包启动任务状态同步回设置页。
+- Store 包声明简体中文、繁体中文、韩语、日语、俄语和德语资源。
 
 ### 它能做什么
 
@@ -198,6 +223,7 @@ HdrSdrBrightness-1.0.6-win64.zip
 - 可以跟随 **Windows 夜间模式**，也可以使用内置默认时段。
 - 检测到手动修改 SDR 内容亮度后，可以自动恢复到配置值。
 - 设置页提供 SDR/HDR 实时预览。
+- 提供微软 Windows HDR Calibration 入口，用于显示器级 HDR 校准。
 - 常驻系统托盘，并支持开机后安静启动。
 - 自动跟随 Windows 应用浅色/深色主题。
 - 支持自动、简体中文、繁体中文、English、한국어、日本語、Русский、Deutsch。
@@ -232,13 +258,15 @@ https://apps.microsoft.com/detail/9n7f2sm5d1lr?hl=zh-CN&gl=US
 
 微软的校准应用更适合处理显示器级别的 HDR 校色和峰值亮度配置；HDR SDR 亮度助手则负责日夜模式下的 SDR 内容亮度控制。两者是配套关系。
 
+检测到 HDR 显示器后，HDR SDR 亮度助手也会在托盘菜单和设置窗口中提供 Windows HDR Calibration 快捷入口。
+
 ### 托盘使用
 
 运行 `HdrSdrBrightness.exe` 会打开设置页，同时程序留在系统托盘。
 
 运行 `HdrSdrBrightness.exe --background` 会只进入托盘；开机自启使用这个模式。
 
-托盘菜单包含：立即应用、设置、开机自启、打开显示设置、打开夜间模式设置、支持作者、退出。
+托盘菜单包含：立即应用、设置、开机自启、打开显示设置、打开夜间模式设置、Windows HDR Calibration、支持作者、退出。
 
 ### 支持作者
 
@@ -287,13 +315,15 @@ https://afdian.com/a/injunaid/plan
 HKCU\Software\OledHdrSdrSync
 ```
 
-开机自启使用当前用户 Run 项：
+便携桌面版开机自启使用当前用户 Run 项：
 
 ```text
 HKCU\Software\Microsoft\Windows\CurrentVersion\Run\HdrSdrBrightness
 ```
 
-程序不创建服务，也不需要管理员权限。如果 Windows 拒绝创建计划任务，会继续使用当前用户 Run 项作为启动方式。
+Microsoft Store 版使用 Windows 打包启动任务，并会从 Windows 设置 > 应用 > 启动 同步当前状态。
+
+程序不创建服务，也不需要管理员权限。如果便携版遇到 Windows 拒绝创建计划任务，会继续使用当前用户 Run 项作为启动方式。
 
 支持者码为本地离线校验。
 
@@ -311,6 +341,12 @@ HKCU\Software\Microsoft\Windows\CurrentVersion\Run\HdrSdrBrightness
 
 ```powershell
 .\package.ps1
+```
+
+生成 Microsoft Store 包：
+
+```powershell
+.\package-msix.ps1 -Version 1.0.7 -Clean
 ```
 
 ### 开源许可

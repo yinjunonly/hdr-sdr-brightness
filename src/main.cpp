@@ -62,6 +62,7 @@ const UINT kMenuDisplaySettings = 1004;
 const UINT kMenuNightLightSettings = 1005;
 const UINT kMenuExit = 1006;
 const UINT kMenuSupport = 1007;
+const UINT kMenuHdrCalibration = 1008;
 
 const int kIdDayBrightness = 2001;
 const int kIdNightBrightness = 2002;
@@ -83,6 +84,8 @@ const int kIdSupportStatus = 2024;
 
 const wchar_t kDonationUrl[] = L"https://afdian.com/a/injunaid/plan";
 const wchar_t kGithubUrl[] = L"https://github.com/yinjunonly/hdr-sdr-brightness";
+const wchar_t kHdrCalibrationStoreUri[] = L"ms-windows-store://pdp/?ProductId=9N7F2SM5D1LR";
+const wchar_t kHdrCalibrationWebUrl[] = L"https://apps.microsoft.com/detail/9n7f2sm5d1lr";
 
 #ifndef NIN_SELECT
 #define NIN_SELECT (WM_USER + 0)
@@ -121,6 +124,8 @@ enum HoverControl {
     HoverCancel = 603,
     HoverSupport = 604,
     HoverSupporterBadge = 605,
+    HoverHdrCalibration = 606,
+    HoverHdrCalibrationDismiss = 607,
     HoverTitleHelp = 611,
     HoverTitleGithub = 612,
     HoverTitleMinimize = 613,
@@ -137,7 +142,8 @@ enum HoverControl {
 
 enum NotificationAction {
     NotificationActionDefault = 0,
-    NotificationActionSupportReminder = 1
+    NotificationActionSupportReminder = 1,
+    NotificationActionHdrCalibration = 2
 };
 
 const UINT32 kQdcOnlyActivePaths = 0x00000002;
@@ -358,6 +364,7 @@ UINT g_taskbarCreated = 0;
 Config g_config;
 Config g_settingsDraft;
 bool g_settingsDraftActive = false;
+bool g_hdrCalibrationCalloutDismissed = false;
 std::wstring g_status = L"Starting";
 std::wstring g_lastNotificationTitle;
 std::wstring g_lastNotificationBody;
@@ -554,12 +561,21 @@ void UpdateSettingsWindowTitle(HWND hwnd) {
 std::wstring PercentLabel(int value);
 int TextWidthLogical(HDC dc, const wchar_t* text, HFONT font);
 void CleanupFontResources();
+void ShowTrayNotification(const std::wstring& title, const std::wstring& body,
+                          NotificationAction action);
 void ShowNotificationDialogWindow();
 void ShowSettingsWindow(HWND owner);
 void ShowSupportWindow(HWND owner);
 
 void OpenGithubRepository(HWND owner) {
     ShellExecuteW(owner, L"open", kGithubUrl, NULL, NULL, SW_SHOWNORMAL);
+}
+
+void OpenHdrCalibration(HWND owner) {
+    HINSTANCE result = ShellExecuteW(owner, L"open", kHdrCalibrationStoreUri, NULL, NULL, SW_SHOWNORMAL);
+    if (reinterpret_cast<INT_PTR>(result) <= 32) {
+        ShellExecuteW(owner, L"open", kHdrCalibrationWebUrl, NULL, NULL, SW_SHOWNORMAL);
+    }
 }
 
 std::wstring AppVersionLabel() {
@@ -1388,10 +1404,9 @@ MaybeBool ReadNightLightActiveViaCloudReader() {
     return MaybeBool();
 }
 
-void SetStartupEnabled(bool enabled) {
+bool TrySetStartupEnabled(bool enabled) {
     if (UseStoreStartupIntegration()) {
-        SetStoreStartupEnabled(enabled);
-        return;
+        return SetStoreStartupEnabled(enabled);
     }
 
     if (enabled) {
@@ -1401,6 +1416,7 @@ void SetStartupEnabled(bool enabled) {
         SetScheduledTaskStartupEnabled(false);
         SetRunKeyStartupEnabled(false);
     }
+    return IsStartupEnabled() == enabled;
 }
 
 void LoadConfig(bool refreshStartupState = false) {
@@ -1419,6 +1435,9 @@ void LoadConfig(bool refreshStartupState = false) {
     }
     if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"StartWithWindows", &value)) {
         g_config.startWithWindows = value != 0;
+    }
+    if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"HdrCalibrationCalloutDismissed", &value)) {
+        g_hdrCalibrationCalloutDismissed = value != 0;
     }
     std::wstring stringValue;
     if (IsSupportFeatureAvailable() &&
@@ -1463,9 +1482,16 @@ void SaveConfig() {
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"NightStartMinute", g_config.nightStartMinute);
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"DayStartHour", g_config.dayStartHour);
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"DayStartMinute", g_config.dayStartMinute);
-    SetStartupEnabled(g_config.startWithWindows);
+    bool requestedStartup = g_config.startWithWindows;
+    bool startupSetOk = TrySetStartupEnabled(requestedStartup);
     if (UseStoreStartupIntegration()) {
         g_config.startWithWindows = IsStartupEnabled();
+        if (requestedStartup && !g_config.startWithWindows && !startupSetOk) {
+            ShowTrayNotification(T(TxtStartWithWindows),
+                                 L"Windows did not enable startup for this packaged app. Enable HDR SDR Brightness Assistant in Windows Settings > Apps > Startup.",
+                                 NotificationActionDefault);
+            ShellExecuteW(g_mainWindow, L"open", L"ms-settings:startupapps", NULL, NULL, SW_SHOWNORMAL);
+        }
     }
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"StartWithWindows", g_config.startWithWindows ? 1 : 0);
 }
@@ -1942,6 +1968,10 @@ void ShowLastNotificationDialog() {
         ShowSupportWindow(g_mainWindow);
         return;
     }
+    if (g_lastNotificationAction == NotificationActionHdrCalibration) {
+        OpenHdrCalibration(g_mainWindow);
+        return;
+    }
     ShowNotificationDialogWindow();
 }
 
@@ -1982,6 +2012,19 @@ void CheckWeeklySupportReminder() {
                          NotificationActionSupportReminder);
 }
 
+void MaybeShowHdrCalibrationReminder() {
+    if (g_lastHdrTargetCount <= 0 || !g_mainWindow) return;
+
+    DWORD shown = 0;
+    if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"HdrCalibrationHintShown", &shown) && shown != 0) {
+        return;
+    }
+
+    WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"HdrCalibrationHintShown", 1);
+    ShowTrayNotification(T(TxtHdrCalibrationTitle), T(TxtHdrCalibrationBody),
+                         NotificationActionHdrCalibration);
+}
+
 void StopBrightnessTransition() {
     if (g_mainWindow) KillTimer(g_mainWindow, kTransitionTimer);
     g_transitionActive = false;
@@ -2000,6 +2043,7 @@ void ContinueBrightnessTransition() {
         StopBrightnessTransition();
         g_lastHdrTargetCount = result.targetCount;
         g_lastHdrSuccessCount = result.successCount;
+        MaybeShowHdrCalibrationReminder();
         g_status = BuildStatusText(decision, g_transitionTargetBrightness, result);
         UpdateTrayTip();
         if (g_settingsWindow) {
@@ -2023,6 +2067,7 @@ void ContinueBrightnessTransition() {
         g_lastKnownTargetLevel = g_transitionTargetLevel;
         g_lastHdrTargetCount = result.targetCount;
         g_lastHdrSuccessCount = result.successCount;
+        MaybeShowHdrCalibrationReminder();
         g_status = BuildStatusText(decision, g_transitionTargetBrightness, result);
         UpdateTrayTip();
     }
@@ -2077,6 +2122,7 @@ void ApplyCurrentBrightness(bool force) {
         g_lastKnownTargetLevel = targetLevel;
         g_lastHdrTargetCount = check.targetCount;
         g_lastHdrSuccessCount = check.successCount;
+        MaybeShowHdrCalibrationReminder();
         g_status = BuildStatusText(decision, brightness, check);
         UpdateTrayTip();
         return;
@@ -2086,6 +2132,7 @@ void ApplyCurrentBrightness(bool force) {
     if (manualCorrection && !g_config.autoRestoreManualChanges) {
         g_lastHdrTargetCount = check.targetCount;
         g_lastHdrSuccessCount = check.successCount;
+        MaybeShowHdrCalibrationReminder();
         g_status = T(TxtManualRestoreOff);
         UpdateTrayTip();
         return;
@@ -2665,6 +2712,8 @@ bool UpdateSettingsAnimations(HWND hwnd) {
         HoverCancel,
         HoverSupport,
         HoverSupporterBadge,
+        HoverHdrCalibration,
+        HoverHdrCalibrationDismiss,
         HoverTitleHelp,
         HoverTitleGithub,
         HoverTitleMinimize,
@@ -2870,6 +2919,7 @@ void ShowTrayMenu(HWND hwnd) {
     }
     AppendMenuW(menu, MF_STRING, kMenuDisplaySettings, T(TxtMenuDisplaySettings));
     AppendMenuW(menu, MF_STRING, kMenuNightLightSettings, T(TxtMenuNightLightSettings));
+    AppendMenuW(menu, MF_STRING, kMenuHdrCalibration, T(TxtMenuHdrCalibration));
     if (IsSupportFeatureAvailable()) {
         AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
         AppendMenuW(menu, MF_STRING, kMenuSupport, T(TxtMenuSupport));
@@ -2989,6 +3039,22 @@ struct SettingsLayout {
     int footerY;
 };
 
+bool ShouldShowHdrCalibrationCallout() {
+    return g_lastHdrTargetCount > 0 && !g_hdrCalibrationCalloutDismissed;
+}
+
+int HdrCalibrationCalloutY(const SettingsLayout& layout) {
+    return layout.heroTop + 108;
+}
+
+RECT HdrCalibrationLinkBox(const SettingsLayout& layout) {
+    return UiBox(layout.cardX + layout.cardW - 192, HdrCalibrationCalloutY(layout), 120, 28);
+}
+
+RECT HdrCalibrationDismissBox(const SettingsLayout& layout) {
+    return UiBox(layout.cardX + layout.cardW - 60, HdrCalibrationCalloutY(layout) + 2, 24, 24);
+}
+
 SettingsLayout BuildSettingsLayout(bool useSystemSwitching) {
     SettingsLayout layout = {};
     const int cardGap = 12;
@@ -3003,7 +3069,7 @@ SettingsLayout BuildSettingsLayout(bool useSystemSwitching) {
     layout.headerSubtitleY = 48;
 
     layout.heroTop = 82;
-    layout.heroH = 116;
+    layout.heroH = ShouldShowHdrCalibrationCallout() ? 146 : 116;
 
     layout.brightnessTop = layout.heroTop + layout.heroH + cardGap;
     layout.brightnessX = layout.cardX;
@@ -3065,6 +3131,15 @@ void ResizeSettingsWindowToLayout(HWND hwnd) {
                                     Ui(visibleHeight + kSettingsTitleBarHeight));
     SetWindowPos(hwnd, NULL, 0, 0, size.cx, size.cy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     UpdateHdrPreviewWindow(hwnd);
+}
+
+void DismissHdrCalibrationCallout(HWND hwnd) {
+    g_hdrCalibrationCalloutDismissed = true;
+    WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"HdrCalibrationCalloutDismissed", 1);
+    if (hwnd) {
+        ResizeSettingsWindowToLayout(hwnd);
+        InvalidateRect(hwnd, NULL, TRUE);
+    }
 }
 
 int SettingsVisibleClientHeight(HWND hwnd) {
@@ -3189,6 +3264,13 @@ int HitTestSettingsControl(POINT pt) {
         int localX = pt.x - Ui(layout.switchModeX);
         int segment = ClampInt(localX / std::max(1, Ui(layout.switchModeW / 2)), 0, 1);
         return HoverSwitchBase + segment;
+    }
+
+    if (ShouldShowHdrCalibrationCallout()) {
+        RECT linkRect = HdrCalibrationLinkBox(layout);
+        if (PtInRect(&linkRect, pt)) return HoverHdrCalibration;
+        RECT dismissRect = HdrCalibrationDismissBox(layout);
+        if (PtInRect(&dismissRect, pt)) return HoverHdrCalibrationDismiss;
     }
 
     if (PtInUiBox(pt, layout.cardX + 12, layout.behaviorRow1 - 5, layout.cardW - 24, 36)) return HoverAutoRestore;
@@ -3432,6 +3514,8 @@ bool UsesStrongerRevealFeedback(int control) {
            control == HoverCancel ||
            control == HoverSupport ||
            control == HoverSupporterBadge ||
+           control == HoverHdrCalibration ||
+           control == HoverHdrCalibrationDismiss ||
            IsSettingsTitleControl(control) ||
            control == HoverSupportDonate ||
            control == HoverSupportActivate ||
@@ -5849,6 +5933,48 @@ void DrawHeroCard(HDC dc, const SettingsLayout& layout) {
                    g_settingsDraft.autoRestoreManualChanges ? T(TxtRestoreOn)
                                                             : T(TxtRestoreOff),
                    g_settingsDraft.autoRestoreManualChanges ? Rgb(34, 197, 94) : Rgb(148, 163, 184));
+
+    if (ShouldShowHdrCalibrationCallout()) {
+        bool calibrationHover = IsHover(HoverHdrCalibration);
+        bool dismissHover = IsHover(HoverHdrCalibrationDismiss);
+        bool calibrationPressed = g_pressedControl == HoverHdrCalibration;
+        bool dismissPressed = g_pressedControl == HoverHdrCalibrationDismiss;
+        int calloutX = x + 28;
+        int calloutY = HdrCalibrationCalloutY(layout);
+        int calloutW = w - 56;
+        COLORREF fill = BlendColor(g_theme.elevated, g_theme.control, calibrationHover ? 18 : 0);
+        COLORREF border = BlendColor(g_theme.elevated, g_theme.controlBorderHover,
+                                     calibrationHover || dismissHover ? 30 : 0);
+        DrawLiquidGlassPanel(dc, calloutX, calloutY, calloutW, 28, 14, fill, border);
+        DrawCircleFill(dc, calloutX + 12, calloutY + 10, 8, g_theme.primary, g_theme.primary);
+
+        RECT linkRect = HdrCalibrationLinkBox(layout);
+        RECT dismissRect = HdrCalibrationDismissBox(layout);
+        RECT hintRect = UiBox(calloutX + 26, calloutY, FromUi(linkRect.left) - calloutX - 38, 28);
+        DrawTextLine(dc, T(TxtHdrCalibrationHint), hintRect, g_smallFont, g_theme.mutedText,
+                     DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+        RECT linkTextRect = linkRect;
+        linkTextRect.top += Ui(calibrationPressed ? 1 : 0);
+        COLORREF linkColor = calibrationHover ? g_theme.primaryHover : g_theme.primary;
+        DrawTextLine(dc, T(TxtHdrCalibrationLink), linkTextRect, g_smallFont, linkColor,
+                     DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        if (calibrationHover || calibrationPressed) {
+            int underlineW = std::min(FromUi(linkRect.right - linkRect.left),
+                                      TextWidthLogical(dc, T(TxtHdrCalibrationLink), g_smallFont));
+            DrawSolidLogicalRect(dc, FromUi(linkRect.right) - underlineW,
+                                 calloutY + 21 + (calibrationPressed ? 1 : 0),
+                                 underlineW, 1, linkColor);
+        }
+
+        if (dismissHover || dismissPressed) {
+            DrawLiquidGlassPanel(dc, FromUi(dismissRect.left), FromUi(dismissRect.top), 24, 24, 6,
+                                 g_theme.controlHover, g_theme.controlHover, HoverHdrCalibrationDismiss);
+        }
+        DrawCloseIcon(dc, FromUi(dismissRect.left) + 8,
+                      FromUi(dismissRect.top) + 8 + (dismissPressed ? 1 : 0),
+                      8, dismissHover ? g_theme.text : g_theme.mutedText);
+    }
 }
 
 void DrawSettingsChrome(HWND hwnd, HDC dc) {
@@ -6001,6 +6127,27 @@ void ApplySettingsDraft(HWND hwnd, bool closeWindow) {
     }
 }
 
+void SyncStoreStartupStateToSettingsDraft(HWND hwnd) {
+    if (!UseStoreStartupIntegration() || !IsStartupFeatureAvailable()) return;
+
+    bool startupEnabled = IsStartupEnabled();
+    if (g_config.startWithWindows == startupEnabled &&
+        (!g_settingsDraftActive || g_settingsDraft.startWithWindows == startupEnabled)) {
+        return;
+    }
+
+    g_config.startWithWindows = startupEnabled;
+    if (g_settingsDraftActive) {
+        g_settingsDraft.startWithWindows = startupEnabled;
+    }
+    WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"StartWithWindows", startupEnabled ? 1 : 0);
+    if (hwnd) {
+        UpdateSettingsWindowTitle(hwnd);
+        InvalidateRect(hwnd, NULL, FALSE);
+        UpdateTrayTip();
+    }
+}
+
 int SetDraftBrightnessFromPoint(HWND hwnd, POINT pt, int id) {
     SettingsLayout layout = BuildSettingsLayout(SettingsDraftUsesSystemSwitching());
     int value = SliderValueFromPoint(pt, BrightnessSliderX(layout), BrightnessSliderWidth(layout));
@@ -6138,6 +6285,19 @@ void HandleSettingsClick(HWND hwnd, POINT pt) {
         return;
     }
 
+    if (ShouldShowHdrCalibrationCallout()) {
+        RECT linkRect = HdrCalibrationLinkBox(layout);
+        if (PtInRect(&linkRect, pt)) {
+            OpenHdrCalibration(hwnd);
+            return;
+        }
+        RECT dismissRect = HdrCalibrationDismissBox(layout);
+        if (PtInRect(&dismissRect, pt)) {
+            DismissHdrCalibrationCallout(hwnd);
+            return;
+        }
+    }
+
     if (PtInUiBox(pt, layout.cardX + 12, layout.behaviorRow1 - 5, layout.cardW - 24, 36)) {
         g_settingsDraft.autoRestoreManualChanges = !g_settingsDraft.autoRestoreManualChanges;
         InvalidateRect(hwnd, NULL, FALSE);
@@ -6223,6 +6383,16 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         InvalidateRect(hwnd, NULL, TRUE);
         return 0;
     }
+    case WM_ACTIVATE:
+        if (LOWORD(wParam) != WA_INACTIVE) {
+            SyncStoreStartupStateToSettingsDraft(hwnd);
+        }
+        break;
+    case WM_SHOWWINDOW:
+        if (wParam) {
+            SyncStoreStartupStateToSettingsDraft(hwnd);
+        }
+        break;
     case WM_NCHITTEST: {
         POINT pt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         ScreenToClient(hwnd, &pt);
@@ -6457,6 +6627,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         RefreshUiDpi(hwnd);
         ReloadUiTheme();
         EnsureUiResources();
+        SyncStoreStartupStateToSettingsDraft(hwnd);
         ApplyModernWindowFrame(hwnd);
         UpdateSettingsWindowTitle(hwnd);
         ResetHdrPreviewDevice();
@@ -6503,6 +6674,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
 
 void ShowSettingsWindow(HWND owner) {
     if (g_settingsWindow) {
+        SyncStoreStartupStateToSettingsDraft(g_settingsWindow);
         UpdateSettingsWindowTitle(g_settingsWindow);
         ShowWindow(g_settingsWindow, SW_SHOWNORMAL);
         ApplyModernWindowFrame(g_settingsWindow);
@@ -6703,6 +6875,9 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
             return 0;
         case kMenuNightLightSettings:
             ShellExecuteW(hwnd, L"open", L"ms-settings:nightlight", NULL, NULL, SW_SHOWNORMAL);
+            return 0;
+        case kMenuHdrCalibration:
+            OpenHdrCalibration(hwnd);
             return 0;
         case kMenuSupport:
             if (!IsSupportFeatureAvailable()) return 0;

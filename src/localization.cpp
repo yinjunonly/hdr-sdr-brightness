@@ -103,7 +103,12 @@ const wchar_t* const kTextEn[TxtTextCount] = {
     L"Thank you for supporting this app.",
     L"Invalid supporter code.",
     L"Coffee time",
-    L"If this app helps your HDR setup, consider buying the author a coffee."
+    L"If this app helps your HDR setup, consider buying the author a coffee.",
+    L"Windows HDR Calibration",
+    L"Calibrate HDR display",
+    L"Calibrate",
+    L"HDR washed out or clipped? Calibrate your display first.",
+    L"HDR SDR Brightness adjusts SDR content brightness. Microsoft's HDR Calibration app helps tune HDR peak brightness and tone mapping."
 };
 
 const wchar_t* const kTextZh[TxtTextCount] = {
@@ -194,7 +199,12 @@ const wchar_t* const kTextZh[TxtTextCount] = {
     L"感谢你支持这个软件。",
     L"支持者码无效。",
     L"请作者喝杯咖啡",
-    L"如果这个工具改善了你的 HDR 使用体验，可以考虑请作者喝杯咖啡。"
+    L"如果这个工具改善了你的 HDR 使用体验，可以考虑请作者喝杯咖啡。",
+    L"Windows HDR 校准",
+    L"校准 HDR 显示器",
+    L"去校准",
+    L"HDR 发灰或过曝？建议先校准显示器。",
+    L"HDR SDR 亮度助手负责调整 SDR 内容亮度。Microsoft 的 HDR 校准应用可帮助校准 HDR 峰值亮度和色调映射。"
 };
 
 const wchar_t* const kTextKo[TxtTextCount] = {
@@ -285,7 +295,12 @@ const wchar_t* const kTextKo[TxtTextCount] = {
     L"이 앱을 후원해 주셔서 감사합니다.",
     L"후원자 코드가 올바르지 않습니다.",
     L"커피 타임",
-    L"이 앱이 HDR 환경에 도움이 된다면 개발자에게 커피 한 잔을 후원해 주세요."
+    L"이 앱이 HDR 환경에 도움이 된다면 개발자에게 커피 한 잔을 후원해 주세요.",
+    L"Windows HDR 보정",
+    L"HDR 디스플레이 보정",
+    L"보정하기",
+    L"HDR이 흐리거나 과하면 먼저 디스플레이를 보정하세요.",
+    L"HDR SDR Brightness는 SDR 콘텐츠 밝기를 조정합니다. Microsoft HDR 보정 앱은 HDR 최대 밝기와 톤 매핑을 조정하는 데 도움이 됩니다."
 };
 
 const wchar_t* const kTextJa[TxtTextCount] = {
@@ -376,7 +391,12 @@ const wchar_t* const kTextJa[TxtTextCount] = {
     L"このアプリを支援していただきありがとうございます。",
     L"支援者コードが無効です。",
     L"コーヒーの時間",
-    L"このアプリが HDR 環境に役立っているなら、作者にコーヒーを一杯贈ってください。"
+    L"このアプリが HDR 環境に役立っているなら、作者にコーヒーを一杯贈ってください。",
+    L"Windows HDR Calibration",
+    L"HDR ディスプレイを調整",
+    L"調整する",
+    L"HDR が白っぽい/明るすぎる場合は先に調整してください。",
+    L"HDR SDR Brightness は SDR コンテンツの明るさを調整します。Microsoft の HDR Calibration アプリは HDR のピーク輝度とトーンマッピング調整に役立ちます。"
 };
 
 const wchar_t* const kTextRu[TxtTextCount] = {
@@ -467,7 +487,12 @@ const wchar_t* const kTextRu[TxtTextCount] = {
     L"Спасибо за поддержку приложения.",
     L"Недействительный код поддержки.",
     L"Время для кофе",
-    L"Если приложение помогает с HDR, угостите автора кофе."
+    L"Если приложение помогает с HDR, угостите автора кофе.",
+    L"Windows HDR Calibration",
+    L"Калибровать HDR-дисплей",
+    L"Калибровать",
+    L"HDR блеклый или пересвечен? Сначала откалибруйте дисплей.",
+    L"HDR SDR Brightness настраивает яркость SDR-контента. Приложение Microsoft HDR Calibration помогает настроить пиковую яркость HDR и тональное отображение."
 };
 
 const wchar_t* const kTextZhTw[TxtTextCount] = {
@@ -558,7 +583,12 @@ const wchar_t* const kTextZhTw[TxtTextCount] = {
     L"感謝你支持這個軟體。",
     L"支持者碼無效。",
     L"請作者喝杯咖啡",
-    L"如果這個工具改善了你的 HDR 使用體驗，可以考慮請作者喝杯咖啡。"
+    L"如果這個工具改善了你的 HDR 使用體驗，可以考慮請作者喝杯咖啡。",
+    L"Windows HDR 校正",
+    L"校正 HDR 顯示器",
+    L"去校正",
+    L"HDR 發灰或過曝？建議先校正顯示器。",
+    L"HDR SDR 亮度助手負責調整 SDR 內容亮度。Microsoft 的 HDR 校正應用程式可協助校正 HDR 峰值亮度和色調映射。"
 };
 
 const wchar_t* const kTextDe[TxtTextCount] = {
@@ -649,7 +679,12 @@ const wchar_t* const kTextDe[TxtTextCount] = {
     L"Danke für deine Unterstützung.",
     L"Ungültiger Unterstützer-Code.",
     L"Kaffeezeit",
-    L"Wenn diese App deinem HDR-Setup hilft, spendiere dem Autor gern einen Kaffee."
+    L"Wenn diese App deinem HDR-Setup hilft, spendiere dem Autor gern einen Kaffee.",
+    L"Windows HDR Calibration",
+    L"HDR-Anzeige kalibrieren",
+    L"Kalibrieren",
+    L"HDR wirkt blass oder überbelichtet? Kalibriere zuerst den Bildschirm.",
+    L"HDR SDR Brightness passt die Helligkeit von SDR-Inhalten an. Microsofts HDR Calibration-App hilft bei HDR-Spitzenhelligkeit und Tonemapping."
 };
 
 const wchar_t* const* TextTableForLanguage(int language) {
