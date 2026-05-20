@@ -10,9 +10,15 @@ It is built for OLED, QD-OLED, MiniLED, HDR monitors, HDR TVs, and HDR laptop pa
 
 ![Clean, efficient, intuitive light and dark UI](image/README/theme-adaptive-1.0.6.png)
 
+<p>
+  <a href="https://apps.microsoft.com/detail/9nksvcpjl35j">
+    <img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft" width="200">
+  </a>
+</p>
+
 ### Download
 
-Download the latest release from [GitHub Releases](https://github.com/yinjunonly/hdr-sdr-brightness/releases/latest).
+Install from the [Microsoft Store](https://apps.microsoft.com/detail/9nksvcpjl35j), or download the portable package from [GitHub Releases](https://github.com/yinjunonly/hdr-sdr-brightness/releases/latest).
 
 Use the Windows x64 package:
 
@@ -197,9 +203,15 @@ SDR white level
 
 ![简洁、高效、直观的浅色与深色界面](image/README/theme-adaptive-1.0.6-zh.png)
 
+<p>
+  <a href="https://apps.microsoft.com/detail/9nksvcpjl35j">
+    <img src="https://get.microsoft.com/images/zh-cn%20dark.svg" alt="从 Microsoft 获取" width="200">
+  </a>
+</p>
+
 ### 下载
 
-请从 [GitHub Releases](https://github.com/yinjunonly/hdr-sdr-brightness/releases/latest) 下载最新版。
+可以从 [Microsoft Store](https://apps.microsoft.com/detail/9nksvcpjl35j) 安装，也可以从 [GitHub Releases](https://github.com/yinjunonly/hdr-sdr-brightness/releases/latest) 下载便携版。
 
 Windows x64 用户下载：
 
