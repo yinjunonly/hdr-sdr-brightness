@@ -33,6 +33,12 @@ Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no inst
 - Fixes Microsoft Store startup state display when Windows Settings has already enabled the packaged startup task.
 - Keeps the app's Start with Windows switch aligned with Windows Settings after Store startup state changes.
 
+### Common Use Cases
+
+- Windows HDR makes SDR desktop apps look too bright, too dim, or washed out.
+- You use an OLED, QD-OLED, MiniLED, HDR monitor, HDR TV, or HDR laptop panel and want separate day/night SDR brightness.
+- You want lightweight Windows HDR SDR brightness control without drivers, services, or a heavy background process.
+
 ### What It Does
 
 - Applies your preferred Windows SDR content brightness while HDR is active.
@@ -203,6 +209,12 @@ HdrSdrBrightness-1.0.8-win64.zip
 
 - 修复 Microsoft Store 版在 Windows 设置中已经开启打包启动任务后，应用内开机自启开关仍显示关闭的问题。
 - Windows 启动设置变化后，应用内“开机自启”开关会继续和系统状态保持一致。
+
+### 常见使用场景
+
+- 开启 Windows HDR 后，SDR 桌面应用看起来过亮、过暗或发灰。
+- 你正在使用 OLED、QD-OLED、MiniLED、HDR 显示器、HDR 电视或 HDR 笔记本屏幕，并希望分别设置白天/夜间 SDR 亮度。
+- 你需要一个轻量的 Windows HDR SDR 亮度调节工具，不安装驱动、不创建服务，也不常驻重型后台进程。
 
 ### 它能做什么
 
