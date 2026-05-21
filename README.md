@@ -93,9 +93,7 @@ If this app improves your HDR setup, you can support development on Afdian:
 https://afdian.com/a/injunaid/plan
 ```
 
-The settings window and tray menu include a **Support author** entry. Supporter codes are checked locally and only show a small supporter badge. They are not a license system; the app remains fully usable without one.
-
-If no supporter code is active, the app may show a small weekly coffee reminder on Saturday evening.
+Supporter codes only show a small local badge. They are optional and do not unlock features.
 
 ### Background Performance
 
@@ -266,9 +264,7 @@ https://apps.microsoft.com/detail/9n7f2sm5d1lr?hl=zh-CN&gl=US
 https://afdian.com/a/injunaid/plan
 ```
 
-设置页和托盘菜单里都有 **支持作者** 入口。支持者码只在本地离线校验，用来显示一个小徽章；它不是授权系统，不影响软件正常使用。
-
-如果还没有激活支持者码，程序可能会在周六晚上显示一次简短的“请作者喝咖啡”提醒。
+支持者码只会显示一个本地小徽章，是可选的，不会解锁功能，也不影响正常使用。
 
 ### 后台性能
 
