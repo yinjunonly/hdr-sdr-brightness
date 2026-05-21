@@ -23,17 +23,15 @@ Install from the [Microsoft Store](https://apps.microsoft.com/detail/9nksvcpjl35
 Use the Windows x64 package:
 
 ```text
-HdrSdrBrightness-1.0.7-win64.zip
+HdrSdrBrightness-1.0.8-win64.zip
 ```
 
 Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no installer, no service, and no administrator privileges are required.
 
-### What's New In 1.0.7
+### What's New In 1.0.8
 
-- Adds Windows HDR Calibration shortcuts from the tray menu and settings window when an HDR display is active.
-- Shows a one-time HDR calibration reminder to help distinguish SDR brightness tuning from display-level HDR calibration.
-- Improves Microsoft Store startup handling by syncing the packaged startup task state back into Settings.
-- Declares localized Store package resources for Simplified Chinese, Traditional Chinese, Korean, Japanese, Russian, and German.
+- Fixes Microsoft Store startup state display when Windows Settings has already enabled the packaged startup task.
+- Keeps the app's Start with Windows switch aligned with Windows Settings after Store startup state changes.
 
 ### What It Does
 
@@ -146,27 +144,9 @@ The app does not create a service and does not require administrator privileges.
 
 Supporter-code validation is local and offline.
 
-### Build From Source
+### Source Code
 
-Most users should download the release package instead of building locally.
-
-Building from source requires MinGW `g++` and `windres`:
-
-```powershell
-.\build.ps1
-```
-
-Release archives are created with:
-
-```powershell
-.\package.ps1
-```
-
-Microsoft Store packages are created with:
-
-```powershell
-.\package-msix.ps1 -Version 1.0.7 -Clean
-```
+The source code is available in this repository for transparency and community review. Most people should install from the Microsoft Store or use the release ZIP rather than building the app themselves.
 
 ### License
 
@@ -216,17 +196,15 @@ SDR white level
 Windows x64 用户下载：
 
 ```text
-HdrSdrBrightness-1.0.7-win64.zip
+HdrSdrBrightness-1.0.8-win64.zip
 ```
 
 解压后运行 `HdrSdrBrightness.exe`。这是便携程序：不需要安装，不创建服务，也不需要管理员权限。
 
-### 1.0.7 更新内容
+### 1.0.8 更新内容
 
-- 托盘菜单和设置窗口新增 Windows HDR Calibration 快捷入口，检测到 HDR 显示器后可直接打开。
-- 新增一次性 HDR 校准提醒，帮助区分 SDR 亮度调整和显示器级 HDR 校准。
-- 改进 Microsoft Store 版开机自启处理，会把打包启动任务状态同步回设置页。
-- Store 包声明简体中文、繁体中文、韩语、日语、俄语和德语资源。
+- 修复 Microsoft Store 版在 Windows 设置中已经开启打包启动任务后，应用内开机自启开关仍显示关闭的问题。
+- Windows 启动设置变化后，应用内“开机自启”开关会继续和系统状态保持一致。
 
 ### 它能做什么
 
@@ -339,27 +317,9 @@ Microsoft Store 版使用 Windows 打包启动任务，并会从 Windows 设置 
 
 支持者码为本地离线校验。
 
-### 从源码构建
+### 源代码
 
-普通用户建议直接下载 Release 包，不需要自己构建。
-
-从源码构建需要 MinGW `g++` 和 `windres`：
-
-```powershell
-.\build.ps1
-```
-
-生成 Release 压缩包：
-
-```powershell
-.\package.ps1
-```
-
-生成 Microsoft Store 包：
-
-```powershell
-.\package-msix.ps1 -Version 1.0.7 -Clean
-```
+本仓库公开源代码，方便查看和审阅。大多数用户建议直接从 Microsoft Store 安装，或下载 Release ZIP 包，不需要自己构建。
 
 ### 开源许可
 

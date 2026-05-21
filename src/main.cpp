@@ -895,6 +895,7 @@ typedef void(WINAPI* RoUninitializeFn)();
 typedef HRESULT(WINAPI* RoGetActivationFactoryFn)(StoreHString, REFIID, void**);
 typedef HRESULT(WINAPI* WindowsCreateStringFn)(PCWSTR, UINT32, StoreHString*);
 typedef HRESULT(WINAPI* WindowsDeleteStringFn)(StoreHString);
+typedef LONG(WINAPI* GetCurrentPackageFamilyNameFn)(UINT32*, PWSTR);
 
 struct StoreIStartupTask;
 struct StoreIStartupTaskStatics;
@@ -1090,6 +1091,47 @@ bool WaitStoreAsync(void* operation, DWORD timeoutMs) {
     return ok;
 }
 
+bool GetCurrentPackageFamilyNameValue(std::wstring* packageFamilyName) {
+    if (!packageFamilyName) return false;
+
+    HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+    if (!kernel) return false;
+
+    GetCurrentPackageFamilyNameFn getCurrentPackageFamilyName =
+        reinterpret_cast<GetCurrentPackageFamilyNameFn>(
+            GetProcAddress(kernel, "GetCurrentPackageFamilyName"));
+    if (!getCurrentPackageFamilyName) return false;
+
+    UINT32 length = 0;
+    LONG rc = getCurrentPackageFamilyName(&length, NULL);
+    if (rc != ERROR_INSUFFICIENT_BUFFER || length == 0) return false;
+
+    std::vector<wchar_t> buffer(length, L'\0');
+    rc = getCurrentPackageFamilyName(&length, buffer.data());
+    if (rc != ERROR_SUCCESS || length == 0 || buffer[0] == L'\0') return false;
+
+    *packageFamilyName = buffer.data();
+    return true;
+}
+
+bool TryReadStoreStartupStateFromRegistry(int* state) {
+    if (!state) return false;
+
+    std::wstring packageFamilyName;
+    if (!GetCurrentPackageFamilyNameValue(&packageFamilyName)) return false;
+
+    std::wstring keyPath =
+        L"Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\"
+        L"AppModel\\SystemAppData\\" +
+        packageFamilyName + L"\\" + kStoreStartupTaskId;
+
+    DWORD value = 0;
+    if (!ReadDwordValue(HKEY_CURRENT_USER, keyPath.c_str(), L"State", &value)) return false;
+
+    *state = static_cast<int>(value);
+    return true;
+}
+
 bool GetStoreStartupTask(StoreWinRtApi* api, StoreIStartupTask** task) {
     if (!api || !task) return false;
     *task = NULL;
@@ -1124,19 +1166,28 @@ cleanup:
 
 bool IsStoreStartupEnabled() {
     StoreWinRtApi api;
-    if (!LoadStoreWinRtApi(&api)) return false;
+    bool apiLoaded = LoadStoreWinRtApi(&api);
 
     StoreIStartupTask* task = NULL;
+    int state = StoreStartupTaskDisabled;
+    bool hasState = false;
     bool enabled = false;
-    if (GetStoreStartupTask(&api, &task)) {
-        int state = StoreStartupTaskDisabled;
+    if (apiLoaded && GetStoreStartupTask(&api, &task)) {
         if (SUCCEEDED(task->lpVtbl->get_State(task, &state))) {
-            enabled = state == StoreStartupTaskEnabled || state == StoreStartupTaskEnabledByPolicy;
+            hasState = true;
         }
         task->lpVtbl->Release(task);
     }
 
-    UnloadStoreWinRtApi(&api);
+    if (!hasState) {
+        hasState = TryReadStoreStartupStateFromRegistry(&state);
+    }
+
+    if (hasState) {
+        enabled = state == StoreStartupTaskEnabled || state == StoreStartupTaskEnabledByPolicy;
+    }
+
+    if (apiLoaded) UnloadStoreWinRtApi(&api);
     return enabled;
 }
 

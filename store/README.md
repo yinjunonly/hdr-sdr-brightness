@@ -20,13 +20,13 @@ Submission content drafts:
 Create an unsigned MSIX plus a Partner Center upload file only when intentionally preparing a release:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\package-msix.ps1 -Version 1.0.6 -Clean
+powershell -ExecutionPolicy Bypass -File .\package-msix.ps1 -Version 1.0.8 -Clean
 ```
 
 Expected outputs:
 
-- `dist\HdrSdrBrightness-1.0.6-win64.msix`
-- `dist\HdrSdrBrightness-1.0.6-win64.msixupload`
+- `dist\HdrSdrBrightness-1.0.8-win64.msix`
+- `dist\HdrSdrBrightness-1.0.8-win64.msixupload`
 
 Upload the `.msixupload` file to Partner Center. Microsoft recommends `.msixupload` for Windows 10/11 Store submissions, and the upload file can contain the `.msix` plus an optional `.appxsym` symbol package for crash analytics.
 
@@ -34,13 +34,13 @@ Useful packaging options:
 
 ```powershell
 # Reuse the current Store build and only package it.
-powershell -ExecutionPolicy Bypass -File .\package-msix.ps1 -Version 1.0.6 -SkipBuild
+powershell -ExecutionPolicy Bypass -File .\package-msix.ps1 -Version 1.0.8 -SkipBuild
 
 # Create only the MSIX, without the Partner Center upload wrapper.
-powershell -ExecutionPolicy Bypass -File .\package-msix.ps1 -Version 1.0.6 -SkipUpload
+powershell -ExecutionPolicy Bypass -File .\package-msix.ps1 -Version 1.0.8 -SkipUpload
 
 # Include an optional symbol package if one is generated later.
-powershell -ExecutionPolicy Bypass -File .\package-msix.ps1 -Version 1.0.6 -AppxSymPath .\dist\HdrSdrBrightness-1.0.6-win64.appxsym
+powershell -ExecutionPolicy Bypass -File .\package-msix.ps1 -Version 1.0.8 -AppxSymPath .\dist\HdrSdrBrightness-1.0.8-win64.appxsym
 ```
 
 The older `package.ps1` script creates a ZIP for direct distribution. Do not upload that ZIP as a Microsoft Store package.
