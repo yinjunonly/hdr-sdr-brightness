@@ -71,6 +71,8 @@ Small interactions are kept responsive and restrained: buttons and controls reac
 
 These values are only starting points. Tune them for your panel, room lighting, and preferred SDR white level.
 
+Early community feedback and reported SDR brightness ranges are collected in [docs/feedback.md](docs/feedback.md).
+
 ### When SDR Brightness Is Not Enough
 
 This app adjusts the Windows **SDR content brightness** level while HDR is enabled. If your HDR display is still washed out, clips highlights, has incorrect peak brightness, or looks wrong even after changing SDR brightness, also run Microsoft's official **Windows HDR Calibration** app:
@@ -247,6 +249,8 @@ HDR SDR 亮度助手的设计目标是日常使用足够简单：打开后设置
 | 自动纠正手动调整 | 开启 |
 
 这些只是起点。你可以根据屏幕类型、房间光线和自己习惯的 SDR 白点继续调整。
+
+早期社区反馈和用户提到的 SDR 亮度范围整理在 [docs/feedback.md](docs/feedback.md)。
 
 ### SDR 亮度仍然不够时
 
