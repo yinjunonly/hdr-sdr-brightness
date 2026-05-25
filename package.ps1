@@ -8,6 +8,7 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $dist = Join-Path $root 'dist'
 $bin = Join-Path $root 'bin'
 $exe = Join-Path $bin 'HdrSdrBrightness.exe'
+$captureDir = Join-Path $bin 'capture'
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $versionFile = Join-Path $root 'VERSION'
@@ -28,6 +29,9 @@ $zip = Join-Path $dist "HdrSdrBrightness-$Version-win64.zip"
 if (-not (Test-Path -LiteralPath $exe)) {
     throw "Missing executable: $exe"
 }
+if (-not (Test-Path -LiteralPath (Join-Path $captureDir 'HdrSdrCapture.exe'))) {
+    throw "Missing capture helper: $captureDir"
+}
 
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
 if (Test-Path -LiteralPath $zip) {
@@ -41,6 +45,7 @@ if (Test-Path -LiteralPath $packageRoot) {
 
 New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
 Copy-Item -LiteralPath $exe -Destination $packageRoot
+Copy-Item -LiteralPath $captureDir -Destination (Join-Path $packageRoot 'capture') -Recurse
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination $packageRoot
 Copy-Item -LiteralPath (Join-Path $root 'README.md') -Destination $packageRoot
 $imageDir = Join-Path $root 'image'

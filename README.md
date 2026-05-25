@@ -8,7 +8,7 @@
 
 It is built for OLED, QD-OLED, MiniLED, HDR monitors, HDR TVs, and HDR laptop panels where regular SDR apps may look too bright, too dim, or washed out after HDR is turned on.
 
-![Clean, efficient, intuitive light and dark UI](image/README/theme-adaptive-1.0.6.png)
+![HDR SDR Brightness settings with compact screenshot hotkey controls](image/README/settings-1.0.9.png)
 
 <p>
   <a href="https://apps.microsoft.com/detail/9nksvcpjl35j">
@@ -23,15 +23,17 @@ Install from the [Microsoft Store](https://apps.microsoft.com/detail/9nksvcpjl35
 Use the Windows x64 package:
 
 ```text
-HdrSdrBrightness-1.0.8-win64.zip
+HdrSdrBrightness-1.0.9-win64.zip
 ```
 
 Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no installer, no service, and no administrator privileges are required.
 
-### What's New In 1.0.8
+### What's New In 1.0.9
 
-- Fixes Microsoft Store startup state display when Windows Settings has already enabled the packaged startup task.
-- Keeps the app's Start with Windows switch aligned with Windows Settings after Store startup state changes.
+- Adds HDR screenshot capture powered by Windows Graphics Capture, with region selection and fullscreen hotkeys.
+- Copies selected screenshots to the clipboard by default, with quick save and lightweight annotation controls.
+- Adds a compact screenshot hotkey settings dialog for region and fullscreen capture shortcuts.
+- Refines the settings layout, card padding, HDR/SDR preview alignment, and popup layering.
 
 ### Common Use Cases
 
@@ -46,6 +48,7 @@ Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no inst
 - Can follow **Windows Night Light**, or use a built-in fallback schedule.
 - Restores the configured SDR brightness if a manual change is detected.
 - Provides a live SDR/HDR preview in the settings window.
+- Captures HDR screenshots with region selection, fullscreen capture, clipboard copy, save, and simple annotations.
 - Links to Microsoft's Windows HDR Calibration app for display-level HDR calibration.
 - Runs quietly from the system tray and can start with Windows.
 - Follows the Windows light/dark app theme automatically.
@@ -91,7 +94,7 @@ Run `HdrSdrBrightness.exe` to open Settings and keep the app in the tray.
 
 Run `HdrSdrBrightness.exe --background` for tray-only startup. This is the mode used by Start with Windows.
 
-The tray menu includes Apply now, Settings, Start with Windows, Display settings, Night Light settings, Windows HDR Calibration, Support author, and Exit.
+The tray menu includes Apply now, Capture HDR screenshot, Settings, Start with Windows, Display settings, Night Light settings, Windows HDR Calibration, Support author, and Exit.
 
 ### Support The Author
 
@@ -202,15 +205,17 @@ SDR white level
 Windows x64 用户下载：
 
 ```text
-HdrSdrBrightness-1.0.8-win64.zip
+HdrSdrBrightness-1.0.9-win64.zip
 ```
 
 解压后运行 `HdrSdrBrightness.exe`。这是便携程序：不需要安装，不创建服务，也不需要管理员权限。
 
-### 1.0.8 更新内容
+### 1.0.9 更新内容
 
-- 修复 Microsoft Store 版在 Windows 设置中已经开启打包启动任务后，应用内开机自启开关仍显示关闭的问题。
-- Windows 启动设置变化后，应用内“开机自启”开关会继续和系统状态保持一致。
+- 新增基于 Windows Graphics Capture 的 HDR 截图，支持区域截图和全屏截图快捷键。
+- 区域截图默认复制到剪贴板，并提供快速保存、轻量标注和马赛克工具。
+- 新增紧凑的截图快捷键设置弹窗，可单独修改区域截图和全屏截图快捷键。
+- 继续优化设置页布局、卡片内边距、HDR/SDR 预览对齐和弹层遮挡问题。
 
 ### 常见使用场景
 
@@ -225,6 +230,7 @@ HdrSdrBrightness-1.0.8-win64.zip
 - 可以跟随 **Windows 夜间模式**，也可以使用内置默认时段。
 - 检测到手动修改 SDR 内容亮度后，可以自动恢复到配置值。
 - 设置页提供 SDR/HDR 实时预览。
+- 支持 HDR 截图：区域选择、全屏捕获、剪贴板复制、保存和简单标注。
 - 提供微软 Windows HDR Calibration 入口，用于显示器级 HDR 校准。
 - 常驻系统托盘，并支持开机后安静启动。
 - 自动跟随 Windows 应用浅色/深色主题。
@@ -270,7 +276,7 @@ https://apps.microsoft.com/detail/9n7f2sm5d1lr?hl=zh-CN&gl=US
 
 运行 `HdrSdrBrightness.exe --background` 会只进入托盘；开机自启使用这个模式。
 
-托盘菜单包含：立即应用、设置、开机自启、打开显示设置、打开夜间模式设置、Windows HDR Calibration、支持作者、退出。
+托盘菜单包含：立即应用、截取 HDR 截图、设置、开机自启、打开显示设置、打开夜间模式设置、Windows HDR Calibration、支持作者、退出。
 
 ### 支持作者
 

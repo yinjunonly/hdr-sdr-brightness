@@ -16,6 +16,7 @@ $bin = Join-Path $root 'bin'
 $dist = Join-Path $root 'dist'
 $store = Join-Path $root 'store'
 $exe = Join-Path $bin 'HdrSdrBrightness.exe'
+$captureDir = Join-Path $bin 'capture'
 $manifestTemplate = Join-Path $store 'AppxManifest.xml.in'
 $packageRoot = Join-Path $obj 'msix\package'
 $assetsRoot = Join-Path $packageRoot 'Assets'
@@ -136,6 +137,9 @@ if (-not $SkipBuild) {
 if (-not (Test-Path -LiteralPath $exe)) {
     throw "Missing executable: $exe"
 }
+if (-not (Test-Path -LiteralPath (Join-Path $captureDir 'HdrSdrCapture.exe'))) {
+    throw "Missing capture helper: $captureDir"
+}
 if (-not (Test-Path -LiteralPath $manifestTemplate)) {
     throw "Missing manifest template: $manifestTemplate"
 }
@@ -148,6 +152,7 @@ if (Test-Path -LiteralPath $packageRoot) {
 New-Item -ItemType Directory -Force -Path $packageRoot, $assetsRoot | Out-Null
 
 Copy-Item -LiteralPath $exe -Destination (Join-Path $packageRoot 'HdrSdrBrightness.exe')
+Copy-Item -LiteralPath $captureDir -Destination (Join-Path $packageRoot 'capture') -Recurse
 Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination (Join-Path $packageRoot 'LICENSE.txt')
 
 $manifest = (Get-Content -LiteralPath $manifestTemplate -Raw).Replace('@VERSION4@', $msixVersion)

@@ -109,6 +109,19 @@ enum TextId {
     TxtHdrCalibrationLink,
     TxtHdrCalibrationHint,
     TxtHdrCalibrationBody,
+    TxtMenuHdrScreenshot,
+    TxtCaptureStarted,
+    TxtCaptureHelperMissing,
+    TxtCaptureLaunchFailed,
+    TxtScreenshotHotkeys,
+    TxtHotkeyGroup,
+    TxtHotkeyScreenshot,
+    TxtHotkeyFullscreen,
+    TxtHotkeyRecording,
+    TxtHotkeyCopied,
+    TxtHotkeyNone,
+    TxtHotkeyScreenshotShort,
+    TxtHotkeyFullscreenShort,
     TxtTextCount
 };
 

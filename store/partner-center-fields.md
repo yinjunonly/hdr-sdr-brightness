@@ -103,13 +103,13 @@ Store 构建中不显示支持者码 UI。
 仅在明确准备 Store 包之后使用：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\package-msix.ps1 -Version 1.0.8 -Clean
+powershell -ExecutionPolicy Bypass -File .\package-msix.ps1 -Version 1.0.9 -Clean
 ```
 
 上传这个文件：
 
 ```text
-dist\HdrSdrBrightness-1.0.8-win64.msixupload
+dist\HdrSdrBrightness-1.0.9-win64.msixupload
 ```
 
 不要上传：

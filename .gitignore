@@ -1,6 +1,8 @@
 /bin/
 /obj/
 /dist/
+/capture/bin/
+/capture/obj/
 *.exe
 *.dll
 *.o

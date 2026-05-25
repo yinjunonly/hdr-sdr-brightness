@@ -108,7 +108,20 @@ const wchar_t* const kTextEn[TxtTextCount] = {
     L"Calibrate HDR display",
     L"Calibrate",
     L"HDR washed out or clipped? Calibrate your display first.",
-    L"HDR SDR Brightness adjusts SDR content brightness. Microsoft's HDR Calibration app helps tune HDR peak brightness and tone mapping."
+    L"HDR SDR Brightness adjusts SDR content brightness. Microsoft's HDR Calibration app helps tune HDR peak brightness and tone mapping.",
+    L"Capture HDR screenshot",
+    L"Drag to select an area. The preview will copy it to the clipboard.",
+    L"HDR screenshot helper was not found. Rebuild the app first.",
+    L"Could not start the HDR screenshot helper.",
+    L"Screenshot hotkeys",
+    L"Hotkeys",
+    L"Region screenshot",
+    L"Fullscreen screenshot",
+    L"Press a key combination...",
+    L"Screenshot copied to clipboard",
+    L"None",
+    L"Region",
+    L"Full"
 };
 
 const wchar_t* const kTextZh[TxtTextCount] = {
@@ -204,7 +217,20 @@ const wchar_t* const kTextZh[TxtTextCount] = {
     L"校准 HDR 显示器",
     L"去校准",
     L"HDR 发灰或过曝？建议先校准显示器。",
-    L"HDR SDR 亮度助手负责调整 SDR 内容亮度。Microsoft 的 HDR 校准应用可帮助校准 HDR 峰值亮度和色调映射。"
+    L"HDR SDR 亮度助手负责调整 SDR 内容亮度。Microsoft 的 HDR 校准应用可帮助校准 HDR 峰值亮度和色调映射。",
+    L"截取 HDR 截图",
+    L"拖拽选择区域，预览窗口会自动复制到剪贴板。",
+    L"未找到 HDR 截图助手，请先重新构建应用。",
+    L"无法启动 HDR 截图助手。",
+    L"截图快捷键",
+    L"快捷键",
+    L"区域截图",
+    L"全屏截图",
+    L"请按下快捷键...",
+    L"截图已复制到剪贴板",
+    L"无",
+    L"区域",
+    L"全屏"
 };
 
 const wchar_t* const kTextKo[TxtTextCount] = {
@@ -300,7 +326,20 @@ const wchar_t* const kTextKo[TxtTextCount] = {
     L"HDR 디스플레이 보정",
     L"보정하기",
     L"HDR이 흐리거나 과하면 먼저 디스플레이를 보정하세요.",
-    L"HDR SDR Brightness는 SDR 콘텐츠 밝기를 조정합니다. Microsoft HDR 보정 앱은 HDR 최대 밝기와 톤 매핑을 조정하는 데 도움이 됩니다."
+    L"HDR SDR Brightness는 SDR 콘텐츠 밝기를 조정합니다. Microsoft HDR 보정 앱은 HDR 최대 밝기와 톤 매핑을 조정하는 데 도움이 됩니다.",
+    L"HDR 스크린샷 캡처",
+    L"영역을 드래그해 선택하세요. 미리 보기에서 클립보드로 복사됩니다.",
+    L"HDR 스크린샷 도우미를 찾을 수 없습니다. 먼저 앱을 다시 빌드하세요.",
+    L"HDR 스크린샷 도우미를 시작할 수 없습니다.",
+    L"스크린샷 단축키",
+    L"단축키",
+    L"영역 캡처",
+    L"전체 화면 캡처",
+    L"키 조합을 누르세요...",
+    L"스크린샷이 클립보드에 복사됨",
+    L"없음",
+    L"영역",
+    L"전체"
 };
 
 const wchar_t* const kTextJa[TxtTextCount] = {
@@ -396,7 +435,20 @@ const wchar_t* const kTextJa[TxtTextCount] = {
     L"HDR ディスプレイを調整",
     L"調整する",
     L"HDR が白っぽい/明るすぎる場合は先に調整してください。",
-    L"HDR SDR Brightness は SDR コンテンツの明るさを調整します。Microsoft の HDR Calibration アプリは HDR のピーク輝度とトーンマッピング調整に役立ちます。"
+    L"HDR SDR Brightness は SDR コンテンツの明るさを調整します。Microsoft の HDR Calibration アプリは HDR のピーク輝度とトーンマッピング調整に役立ちます。",
+    L"HDR スクリーンショットを撮影",
+    L"範囲をドラッグして選択してください。プレビューでクリップボードにコピーされます。",
+    L"HDR スクリーンショット ヘルパーが見つかりません。先にアプリを再ビルドしてください。",
+    L"HDR スクリーンショット ヘルパーを起動できません。",
+    L"スクリーンショットのホットキー",
+    L"ホットキー",
+    L"範囲スクリーンショット",
+    L"全画面スクリーンショット",
+    L"キーの組み合わせを押してください...",
+    L"スクリーンショットをクリップボードにコピーしました",
+    L"なし",
+    L"範囲",
+    L"全画面"
 };
 
 const wchar_t* const kTextRu[TxtTextCount] = {
@@ -492,7 +544,20 @@ const wchar_t* const kTextRu[TxtTextCount] = {
     L"Калибровать HDR-дисплей",
     L"Калибровать",
     L"HDR блеклый или пересвечен? Сначала откалибруйте дисплей.",
-    L"HDR SDR Brightness настраивает яркость SDR-контента. Приложение Microsoft HDR Calibration помогает настроить пиковую яркость HDR и тональное отображение."
+    L"HDR SDR Brightness настраивает яркость SDR-контента. Приложение Microsoft HDR Calibration помогает настроить пиковую яркость HDR и тональное отображение.",
+    L"Сделать HDR-снимок экрана",
+    L"Выделите область перетаскиванием. Предпросмотр скопирует ее в буфер обмена.",
+    L"Помощник HDR-снимков не найден. Сначала пересоберите приложение.",
+    L"Не удалось запустить помощник HDR-снимков.",
+    L"Горячие клавиши снимков",
+    L"Горячие клавиши",
+    L"Снимок области",
+    L"Снимок экрана",
+    L"Нажмите комбинацию клавиш...",
+    L"Снимок скопирован в буфер обмена",
+    L"Нет",
+    L"Область",
+    L"Экран"
 };
 
 const wchar_t* const kTextZhTw[TxtTextCount] = {
@@ -588,7 +653,20 @@ const wchar_t* const kTextZhTw[TxtTextCount] = {
     L"校正 HDR 顯示器",
     L"去校正",
     L"HDR 發灰或過曝？建議先校正顯示器。",
-    L"HDR SDR 亮度助手負責調整 SDR 內容亮度。Microsoft 的 HDR 校正應用程式可協助校正 HDR 峰值亮度和色調映射。"
+    L"HDR SDR 亮度助手負責調整 SDR 內容亮度。Microsoft 的 HDR 校正應用程式可協助校正 HDR 峰值亮度和色調映射。",
+    L"擷取 HDR 截圖",
+    L"拖曳選取區域，預覽視窗會自動複製到剪貼簿。",
+    L"找不到 HDR 截圖助手，請先重新建置應用程式。",
+    L"無法啟動 HDR 截圖助手。",
+    L"截圖快捷鍵",
+    L"快捷鍵",
+    L"區域截圖",
+    L"全螢幕截圖",
+    L"請按下快捷鍵...",
+    L"截圖已複製到剪貼簿",
+    L"無",
+    L"區域",
+    L"全螢幕"
 };
 
 const wchar_t* const kTextDe[TxtTextCount] = {
@@ -684,7 +762,20 @@ const wchar_t* const kTextDe[TxtTextCount] = {
     L"HDR-Anzeige kalibrieren",
     L"Kalibrieren",
     L"HDR wirkt blass oder überbelichtet? Kalibriere zuerst den Bildschirm.",
-    L"HDR SDR Brightness passt die Helligkeit von SDR-Inhalten an. Microsofts HDR Calibration-App hilft bei HDR-Spitzenhelligkeit und Tonemapping."
+    L"HDR SDR Brightness passt die Helligkeit von SDR-Inhalten an. Microsofts HDR Calibration-App hilft bei HDR-Spitzenhelligkeit und Tonemapping.",
+    L"HDR-Screenshot aufnehmen",
+    L"Bereich ziehen und auswählen. Die Vorschau kopiert ihn in die Zwischenablage.",
+    L"HDR-Screenshot-Helfer wurde nicht gefunden. Erstelle die App zuerst neu.",
+    L"HDR-Screenshot-Helfer konnte nicht gestartet werden.",
+    L"Screenshot-Tastenkürzel",
+    L"Tastenkombinationen",
+    L"Bereichs-Screenshot",
+    L"Vollbild-Screenshot",
+    L"Tastenkombination drücken...",
+    L"Screenshot in Zwischenablage kopiert",
+    L"Kein",
+    L"Bereich",
+    L"Vollbild"
 };
 
 const wchar_t* const* TextTableForLanguage(int language) {

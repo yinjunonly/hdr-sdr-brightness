@@ -12,6 +12,10 @@
 #define CLEARTYPE_NATURAL_QUALITY 6
 #endif
 
+#ifndef MOD_NOREPEAT
+#define MOD_NOREPEAT 0x4000
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cwchar>
@@ -51,6 +55,9 @@ const int kSettingsClientHeight = 620;
 const int kSettingsMinVisibleClientHeight = 560;
 const int kSettingsTitleBarHeight = 44;
 const int kSettingsFooterAreaHeight = 72;
+const int kSettingsCardPadding = 36;
+const int kSettingsCardTopPadding = 16;
+const int kSettingsRightControlWidth = 220;
 const int kAnimationSlotCount = 800;
 const int kPillControlRadius = 16;
 const size_t kSupporterCodeMaxLength = 20;
@@ -63,6 +70,11 @@ const UINT kMenuNightLightSettings = 1005;
 const UINT kMenuExit = 1006;
 const UINT kMenuSupport = 1007;
 const UINT kMenuHdrCalibration = 1008;
+const UINT kMenuHdrScreenshot = 1009;
+
+const int kHotkeyIdScreenshot = 1;
+const int kHotkeyIdFullscreen = 2;
+const UINT kFullscreenDoneMessage = WM_APP + 4;
 
 const int kIdDayBrightness = 2001;
 const int kIdNightBrightness = 2002;
@@ -133,17 +145,21 @@ enum HoverControl {
     HoverDialogOk = 701,
     HoverDialogClose = 702,
     HoverDialogLink = 703,
+    HoverHotkeySettings = 704,
     HoverNotifyOk = 711,
     HoverNotifySettings = 712,
     HoverSupportDonate = 721,
     HoverSupportActivate = 722,
-    HoverSupportCode = 724
+    HoverSupportCode = 724,
+    HoverScreenshotHotkey = 750,
+    HoverFullscreenHotkey = 751
 };
 
 enum NotificationAction {
     NotificationActionDefault = 0,
     NotificationActionSupportReminder = 1,
-    NotificationActionHdrCalibration = 2
+    NotificationActionHdrCalibration = 2,
+    NotificationActionHdrScreenshot = 3
 };
 
 const UINT32 kQdcOnlyActivePaths = 0x00000002;
@@ -305,6 +321,10 @@ struct Config {
     int nightStartMinute;
     int dayStartHour;
     int dayStartMinute;
+    UINT screenshotHotkeyMod;
+    UINT screenshotHotkeyVk;
+    UINT fullscreenHotkeyMod;
+    UINT fullscreenHotkeyVk;
 
     Config()
         : dayBrightness(40),
@@ -317,7 +337,11 @@ struct Config {
           nightStartHour(18),
           nightStartMinute(0),
           dayStartHour(8),
-          dayStartMinute(0) {}
+          dayStartMinute(0),
+          screenshotHotkeyMod(MOD_ALT),
+          screenshotHotkeyVk('S'),
+          fullscreenHotkeyMod(MOD_ALT | MOD_SHIFT),
+          fullscreenHotkeyVk('S') {}
 };
 
 struct MaybeBool {
@@ -382,11 +406,13 @@ bool g_transitionNight = false;
 std::wstring g_transitionSource;
 DWORD g_lastManualNotificationTick = 0;
 int g_draggingBrightnessId = 0;
+int g_recordingHotkey = 0;  // 0=无，HoverScreenshotHotkey 或 HoverFullscreenHotkey 录制中
 bool g_settingsPreviewActive = false;
 int g_settingsPreviewBrightness = -1;
 bool g_settingsPreviewNight = false;
 bool g_languageDropdownOpen = false;
 bool g_settingsInfoDialogOpen = false;
+bool g_hotkeyDialogOpen = false;
 HWND g_notificationWindow = NULL;
 HWND g_supportWindow = NULL;
 HWND g_supportOwnerWindow = NULL;
@@ -560,6 +586,7 @@ void UpdateSettingsWindowTitle(HWND hwnd) {
 
 std::wstring PercentLabel(int value);
 int TextWidthLogical(HDC dc, const wchar_t* text, HFONT font);
+bool FileExists(const std::wstring& path);
 void CleanupFontResources();
 void ShowTrayNotification(const std::wstring& title, const std::wstring& body,
                           NotificationAction action);
@@ -646,6 +673,112 @@ std::wstring QuoteCommandLineArgument(const std::wstring& value) {
     quoted.append(backslashes * 2, L'\\');
     quoted.push_back(L'"');
     return quoted;
+}
+
+std::wstring DirectoryFromPath(const std::wstring& path) {
+    size_t pos = path.find_last_of(L"\\/");
+    if (pos == std::wstring::npos) return L"";
+    return path.substr(0, pos);
+}
+
+std::wstring JoinPath(const std::wstring& directory, const std::wstring& relative) {
+    if (directory.empty()) return relative;
+    wchar_t last = directory[directory.size() - 1];
+    if (last == L'\\' || last == L'/') return directory + relative;
+    return directory + L"\\" + relative;
+}
+
+std::wstring GetCaptureHelperPath() {
+    return JoinPath(JoinPath(DirectoryFromPath(GetExePath()), L"capture"), L"HdrSdrCapture.exe");
+}
+
+bool LaunchDetached(const std::wstring& commandLine, const std::wstring& workingDirectory) {
+    STARTUPINFOW si = {};
+    PROCESS_INFORMATION pi = {};
+    si.cb = sizeof(si);
+
+    std::vector<wchar_t> mutableCommand(commandLine.begin(), commandLine.end());
+    mutableCommand.push_back(L'\0');
+
+    BOOL created = CreateProcessW(NULL, mutableCommand.data(), NULL, NULL, FALSE, 0,
+                                  NULL, workingDirectory.empty() ? NULL : workingDirectory.c_str(), &si, &pi);
+    if (!created) return false;
+
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return true;
+}
+
+void LaunchHdrScreenshotHelper(HWND owner) {
+    (void)owner;
+    std::wstring helperPath = GetCaptureHelperPath();
+    if (!FileExists(helperPath)) {
+        ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtCaptureHelperMissing), NotificationActionDefault);
+        return;
+    }
+
+    std::wstring command = QuotePath(helperPath) + L" --select-region --open-folder --lang " + IntText(CurrentUiLanguage());
+    if (!LaunchDetached(command, DirectoryFromPath(helperPath))) {
+        ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtCaptureLaunchFailed), NotificationActionDefault);
+        return;
+    }
+
+}
+
+bool RunHiddenCommand(const std::wstring& commandLine, DWORD timeoutMs);
+
+void UnregisterAppHotkeys() {
+    if (!g_mainWindow) return;
+    UnregisterHotKey(g_mainWindow, kHotkeyIdScreenshot);
+    UnregisterHotKey(g_mainWindow, kHotkeyIdFullscreen);
+}
+
+void RegisterAppHotkeys() {
+    if (!g_mainWindow) return;
+    UnregisterAppHotkeys();
+    if (g_config.screenshotHotkeyVk != 0) {
+        RegisterHotKey(g_mainWindow, kHotkeyIdScreenshot,
+                       g_config.screenshotHotkeyMod | MOD_NOREPEAT,
+                       g_config.screenshotHotkeyVk);
+    }
+    if (g_config.fullscreenHotkeyVk != 0) {
+        RegisterHotKey(g_mainWindow, kHotkeyIdFullscreen,
+                       g_config.fullscreenHotkeyMod | MOD_NOREPEAT,
+                       g_config.fullscreenHotkeyVk);
+    }
+}
+
+// 全屏截图后台线程参数包
+struct FullscreenCaptureArgs {
+    std::wstring command;
+    HWND mainWnd;
+};
+
+static DWORD WINAPI FullscreenCaptureThread(LPVOID param) {
+    auto* args = static_cast<FullscreenCaptureArgs*>(param);
+    bool success = RunHiddenCommand(args->command, 30000);
+    PostMessageW(args->mainWnd, kFullscreenDoneMessage, success ? 1 : 0, 0);
+    delete args;
+    return 0;
+}
+
+// 全屏截图：后台线程执行，完成后通过消息通知主窗口
+void LaunchHdrFullscreenCapture(HWND owner) {
+    (void)owner;
+    std::wstring helperPath = GetCaptureHelperPath();
+    if (!FileExists(helperPath)) {
+        ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtCaptureHelperMissing), NotificationActionDefault);
+        return;
+    }
+    std::wstring command = QuotePath(helperPath) + L" --fullscreen-clip --lang " + IntText(CurrentUiLanguage());
+    auto* args = new FullscreenCaptureArgs{command, g_mainWindow};
+    HANDLE hThread = CreateThread(NULL, 0, FullscreenCaptureThread, args, 0, NULL);
+    if (hThread) {
+        CloseHandle(hThread);
+    } else {
+        delete args;
+        PostMessageW(g_mainWindow, kFullscreenDoneMessage, 0, 0);
+    }
 }
 
 bool RunHiddenCommand(const std::wstring& commandLine, DWORD timeoutMs) {
@@ -839,7 +972,7 @@ int SupportButtonWidth(HDC dc) {
 }
 
 int SupportButtonLeft(HDC dc) {
-    return 608 - SupportButtonWidth(dc);
+    return 28 + 584 - kSettingsCardPadding - SupportButtonWidth(dc);
 }
 
 int SupporterBadgeWidth(HDC dc) {
@@ -847,7 +980,7 @@ int SupporterBadgeWidth(HDC dc) {
 }
 
 int SupporterBadgeLeft(HDC dc) {
-    return 608 - SupporterBadgeWidth(dc);
+    return 28 + 584 - kSettingsCardPadding - SupporterBadgeWidth(dc);
 }
 
 bool ReadBinaryValue(HKEY root, const wchar_t* keyPath, const wchar_t* valueName, std::vector<BYTE>* data) {
@@ -1510,6 +1643,18 @@ void LoadConfig(bool refreshStartupState = false) {
     if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"DayStartMinute", &value)) {
         g_config.dayStartMinute = ClampInt(static_cast<int>(value), 0, 59);
     }
+    if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"ScreenshotHotkeyMod", &value)) {
+        g_config.screenshotHotkeyMod = value & (MOD_ALT | MOD_CONTROL | MOD_SHIFT | MOD_WIN);
+    }
+    if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"ScreenshotHotkeyVk", &value)) {
+        g_config.screenshotHotkeyVk = value;
+    }
+    if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"FullscreenHotkeyMod", &value)) {
+        g_config.fullscreenHotkeyMod = value & (MOD_ALT | MOD_CONTROL | MOD_SHIFT | MOD_WIN);
+    }
+    if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"FullscreenHotkeyVk", &value)) {
+        g_config.fullscreenHotkeyVk = value;
+    }
     if (!IsStartupFeatureAvailable()) {
         g_config.startWithWindows = false;
     } else if (refreshStartupState) {
@@ -1533,6 +1678,10 @@ void SaveConfig() {
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"NightStartMinute", g_config.nightStartMinute);
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"DayStartHour", g_config.dayStartHour);
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"DayStartMinute", g_config.dayStartMinute);
+    WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"ScreenshotHotkeyMod", g_config.screenshotHotkeyMod);
+    WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"ScreenshotHotkeyVk", g_config.screenshotHotkeyVk);
+    WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"FullscreenHotkeyMod", g_config.fullscreenHotkeyMod);
+    WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"FullscreenHotkeyVk", g_config.fullscreenHotkeyVk);
     bool requestedStartup = g_config.startWithWindows;
     bool startupSetOk = TrySetStartupEnabled(requestedStartup);
     if (UseStoreStartupIntegration()) {
@@ -2021,6 +2170,10 @@ void ShowLastNotificationDialog() {
     }
     if (g_lastNotificationAction == NotificationActionHdrCalibration) {
         OpenHdrCalibration(g_mainWindow);
+        return;
+    }
+    if (g_lastNotificationAction == NotificationActionHdrScreenshot) {
+        LaunchHdrScreenshotHelper(g_mainWindow);
         return;
     }
     ShowNotificationDialogWindow();
@@ -2703,6 +2856,16 @@ RECT SettingsDialogLinkBox(HWND hwnd) {
     return rect;
 }
 
+RECT HotkeyDialogScreenshotBox(HWND hwnd) {
+    RECT dialog = SettingsDialogBox(hwnd);
+    return UiBox(FromUi(dialog.right) - 188, FromUi(dialog.top) + 72, 150, 30);
+}
+
+RECT HotkeyDialogFullscreenBox(HWND hwnd) {
+    RECT dialog = SettingsDialogBox(hwnd);
+    return UiBox(FromUi(dialog.right) - 188, FromUi(dialog.top) + 118, 150, 30);
+}
+
 bool IsHover(int control) {
     return g_hoverControl == control;
 }
@@ -2743,7 +2906,7 @@ bool AnimateControlSlot(int control) {
 bool UpdateSettingsAnimations(HWND hwnd) {
     bool changed = false;
     changed |= AnimateValue(&g_settingsWindowAnim, 1000, 120);
-    changed |= AnimateValue(&g_settingsDialogAnim, g_settingsInfoDialogOpen ? 1000 : 0, 150);
+    changed |= AnimateValue(&g_settingsDialogAnim, (g_settingsInfoDialogOpen || g_hotkeyDialogOpen) ? 1000 : 0, 150);
     changed |= AnimateValue(&g_settingsDropdownAnim, g_languageDropdownOpen ? 1000 : 0, 180);
 
     static const int controls[] = {
@@ -2772,11 +2935,14 @@ bool UpdateSettingsAnimations(HWND hwnd) {
         HoverDialogOk,
         HoverDialogClose,
         HoverDialogLink,
+        HoverHotkeySettings,
         HoverNotifyOk,
         HoverNotifySettings,
         HoverSupportDonate,
         HoverSupportActivate,
-        HoverSupportCode
+        HoverSupportCode,
+        HoverScreenshotHotkey,
+        HoverFullscreenHotkey
     };
 
     for (size_t i = 0; i < sizeof(controls) / sizeof(controls[0]); ++i) {
@@ -2792,7 +2958,7 @@ bool UpdateSettingsAnimations(HWND hwnd) {
 
     bool supportLoop = IsSupportFeatureAvailable() &&
                        hwnd == g_settingsWindow && !HasSupporterBadge() &&
-                       !g_settingsInfoDialogOpen && !IsIconic(hwnd);
+                       !g_settingsInfoDialogOpen && !g_hotkeyDialogOpen && !IsIconic(hwnd);
     if (supportLoop) {
         g_supportButtonAnim = (g_supportButtonAnim + 1) % 120;
         RECT supportRect = UiBox(442, kSettingsTitleBarHeight + 12, 174, 54);
@@ -2971,6 +3137,7 @@ void ShowTrayMenu(HWND hwnd) {
     AppendMenuW(menu, MF_STRING, kMenuDisplaySettings, T(TxtMenuDisplaySettings));
     AppendMenuW(menu, MF_STRING, kMenuNightLightSettings, T(TxtMenuNightLightSettings));
     AppendMenuW(menu, MF_STRING, kMenuHdrCalibration, T(TxtMenuHdrCalibration));
+    AppendMenuW(menu, MF_STRING, kMenuHdrScreenshot, T(TxtMenuHdrScreenshot));
     if (IsSupportFeatureAvailable()) {
         AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
         AppendMenuW(menu, MF_STRING, kMenuSupport, T(TxtMenuSupport));
@@ -3087,6 +3254,10 @@ struct SettingsLayout {
     int behaviorH;
     int behaviorRow1;
     int behaviorRow2;
+    int hotkeyTop;
+    int hotkeyH;
+    int hotkeyRow1;
+    int hotkeyRow2;
     int footerY;
 };
 
@@ -3095,20 +3266,22 @@ bool ShouldShowHdrCalibrationCallout() {
 }
 
 int HdrCalibrationCalloutY(const SettingsLayout& layout) {
-    return layout.heroTop + 108;
+    return layout.heroTop + 100;
 }
 
 RECT HdrCalibrationLinkBox(const SettingsLayout& layout) {
-    return UiBox(layout.cardX + layout.cardW - 192, HdrCalibrationCalloutY(layout), 120, 28);
+    int dismissX = layout.cardX + layout.cardW - kSettingsCardPadding - 24;
+    return UiBox(dismissX - 132, HdrCalibrationCalloutY(layout), 120, 28);
 }
 
 RECT HdrCalibrationDismissBox(const SettingsLayout& layout) {
-    return UiBox(layout.cardX + layout.cardW - 60, HdrCalibrationCalloutY(layout) + 2, 24, 24);
+    return UiBox(layout.cardX + layout.cardW - kSettingsCardPadding - 24,
+                 HdrCalibrationCalloutY(layout) + 2, 24, 24);
 }
 
 SettingsLayout BuildSettingsLayout(bool useSystemSwitching) {
     SettingsLayout layout = {};
-    const int cardGap = 12;
+    const int cardGap = 8;
 
     layout.cardX = 28;
     layout.cardW = 584;
@@ -3120,48 +3293,53 @@ SettingsLayout BuildSettingsLayout(bool useSystemSwitching) {
     layout.headerSubtitleY = 48;
 
     layout.heroTop = 82;
-    layout.heroH = ShouldShowHdrCalibrationCallout() ? 146 : 116;
+    layout.heroH = ShouldShowHdrCalibrationCallout() ? 140 : 104;
 
     layout.brightnessTop = layout.heroTop + layout.heroH + cardGap;
     layout.brightnessX = layout.cardX;
     layout.brightnessW = layout.cardW;
-    layout.brightnessH = 248;
-    layout.brightnessRow1 = layout.brightnessTop + 170;
-    layout.brightnessRow2 = layout.brightnessRow1 + 38;
+    layout.brightnessH = 218;
+    layout.brightnessRow1 = layout.brightnessTop + 154;
+    layout.brightnessRow2 = layout.brightnessRow1 + 36;
 
     layout.switchTop = layout.brightnessTop + layout.brightnessH + cardGap;
     layout.switchX = layout.cardX;
     layout.switchW = layout.cardW;
-    layout.switchH = useSystemSwitching ? 104 : 148;
-    layout.switchModeX = 372;
-    layout.switchModeY = layout.switchTop + 18;
-    layout.switchModeW = 220;
+    layout.switchH = useSystemSwitching ? 88 : 124;
+    layout.switchModeW = kSettingsRightControlWidth;
     layout.switchModeH = 32;
-    layout.switchHintY = layout.switchTop + 64;
-    layout.switchNightY = layout.switchTop + 62;
-    layout.switchDayY = layout.switchNightY + 38;
+    layout.switchModeX = layout.cardX + layout.cardW - kSettingsCardPadding - layout.switchModeW;
+    layout.switchModeY = layout.switchTop + 16;
+    layout.switchHintY = layout.switchTop + 56;
+    layout.switchNightY = layout.switchTop + 56;
+    layout.switchDayY = layout.switchNightY + 36;
 
     layout.appearanceTop = layout.switchTop + layout.switchH + cardGap;
     layout.appearanceX = layout.cardX;
     layout.appearanceW = layout.cardW;
-    layout.appearanceH = 92;
-    layout.appearanceRow1 = layout.appearanceTop + 52;
+    layout.appearanceH = 80;
+    layout.appearanceRow1 = layout.appearanceTop + 44;
 
-    layout.languageSegmentX = 422;
-    layout.languageSegmentY = layout.appearanceRow1 - 2;
-    layout.languageSegmentW = 170;
+    layout.languageSegmentW = kSettingsRightControlWidth;
     layout.languageSegmentH = 32;
+    layout.languageSegmentX = layout.cardX + layout.cardW - kSettingsCardPadding - layout.languageSegmentW;
+    layout.languageSegmentY = layout.appearanceRow1 - 2;
     layout.languageTop = layout.languageSegmentY;
     layout.languageH = layout.languageSegmentH;
 
     layout.behaviorTop = layout.appearanceTop + layout.appearanceH + cardGap;
     layout.behaviorX = layout.cardX;
     layout.behaviorW = layout.cardW;
-    layout.behaviorH = IsStartupFeatureAvailable() ? 132 : 92;
-    layout.behaviorRow1 = layout.behaviorTop + 52;
-    layout.behaviorRow2 = layout.behaviorRow1 + 40;
+    layout.behaviorH = IsStartupFeatureAvailable() ? 154 : 118;
+    layout.behaviorRow1 = layout.behaviorTop + 44;
+    layout.behaviorRow2 = layout.behaviorRow1 + 36;
 
-    layout.footerY = layout.behaviorTop + layout.behaviorH + 18;
+    layout.hotkeyTop = 0;
+    layout.hotkeyH = 0;
+    layout.hotkeyRow1 = IsStartupFeatureAvailable() ? layout.behaviorRow2 + 36 : layout.behaviorRow1 + 36;
+    layout.hotkeyRow2 = layout.hotkeyRow1;
+
+    layout.footerY = layout.behaviorTop + layout.behaviorH + 16;
     layout.clientHeight = std::max(kSettingsClientHeight, layout.footerY + kSettingsFooterAreaHeight);
     return layout;
 }
@@ -3225,23 +3403,19 @@ int BrightnessSliderWidth(const SettingsLayout&) {
 }
 
 int BrightnessValueX(const SettingsLayout& layout) {
-    (void)layout;
-    return 536;
+    return layout.cardX + layout.cardW - kSettingsCardPadding - 56;
 }
 
 int TimeStepperMinusX(const SettingsLayout& layout) {
-    (void)layout;
-    return 390;
+    return layout.cardX + layout.cardW - kSettingsCardPadding - 166;
 }
 
 int TimeStepperValueX(const SettingsLayout& layout) {
-    (void)layout;
-    return 426;
+    return layout.cardX + layout.cardW - kSettingsCardPadding - 122;
 }
 
 int TimeStepperPlusX(const SettingsLayout& layout) {
-    (void)layout;
-    return 522;
+    return layout.cardX + layout.cardW - kSettingsCardPadding - 28;
 }
 
 int LanguageDropdownWidth() {
@@ -3275,6 +3449,44 @@ RECT LanguageDropdownBox(const SettingsLayout& layout) {
     int x = layout.languageSegmentX + layout.languageSegmentW - w;
     int h = LanguageDropdownHeight();
     return UiBox(x, LanguageDropdownY(layout), w, h);
+}
+
+void BrightnessPreviewLayout(const SettingsLayout& layout, int* leftX, int* topY,
+                             int* imageW, int* imageH, int* gap) {
+    const int previewGap = 52;
+    const int previewW = (layout.cardW - kSettingsCardPadding * 2 - previewGap) / 2;
+    if (leftX) *leftX = layout.cardX + kSettingsCardPadding;
+    if (topY) *topY = layout.brightnessTop + 48;
+    if (imageW) *imageW = previewW;
+    if (imageH) *imageH = 68;
+    if (gap) *gap = previewGap;
+}
+
+std::wstring HotkeyText(UINT mod, UINT vk) {
+    if (vk == 0) return T(TxtHotkeyNone);
+    std::wstring result;
+    if (mod & MOD_CONTROL) result += L"Ctrl + ";
+    if (mod & MOD_SHIFT) result += L"Shift + ";
+    if (mod & MOD_ALT) result += L"Alt + ";
+    if (mod & MOD_WIN) result += L"Win + ";
+    if (vk >= 'A' && vk <= 'Z') {
+        result += static_cast<wchar_t>(vk);
+    } else if (vk >= VK_F1 && vk <= VK_F12) {
+        wchar_t fnum[8] = {};
+        _snwprintf(fnum, 8, L"F%u", vk - VK_F1 + 1);
+        result += fnum;
+    } else {
+        UINT scanCode = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+        wchar_t keyName[64] = {};
+        if (GetKeyNameTextW(static_cast<LONG>(scanCode) << 16, keyName, 64) > 0) {
+            result += keyName;
+        } else {
+            wchar_t hex[16] = {};
+            _snwprintf(hex, 16, L"0x%02X", vk);
+            result += hex;
+        }
+    }
+    return result;
 }
 
 int LanguageDropdownOptionFromPoint(POINT pt, const SettingsLayout& layout) {
@@ -3327,6 +3539,8 @@ int HitTestSettingsControl(POINT pt) {
     if (PtInUiBox(pt, layout.cardX + 12, layout.behaviorRow1 - 5, layout.cardW - 24, 36)) return HoverAutoRestore;
     if (IsStartupFeatureAvailable() &&
         PtInUiBox(pt, layout.cardX + 12, layout.behaviorRow2 - 5, layout.cardW - 24, 36)) return HoverStartup;
+    if (PtInUiBox(pt, layout.languageSegmentX, layout.hotkeyRow1 - 4,
+                  layout.languageSegmentW, 32)) return HoverHotkeySettings;
 
     if (!useSystem && PtInUiBox(pt, TimeStepperMinusX(layout), layout.switchNightY - 4, 28, 28)) return HoverNightMinus;
     if (!useSystem && PtInUiBox(pt, TimeStepperPlusX(layout), layout.switchNightY - 4, 28, 28)) return HoverNightPlus;
@@ -3340,9 +3554,15 @@ int HitTestSettingsFooterControl(HWND hwnd, POINT pt) {
     pt = SettingsViewportPoint(pt);
     if (pt.y < 0) return HoverNone;
     int footerY = SettingsVisibleClientHeight(hwnd) - kSettingsFooterAreaHeight + 19;
-    if (PtInUiBox(pt, 348, footerY, 84, 34)) return HoverOk;
-    if (PtInUiBox(pt, 438, footerY, 84, 34)) return HoverApply;
-    if (PtInUiBox(pt, 528, footerY, 84, 34)) return HoverCancel;
+    const int buttonW = 84;
+    const int buttonGap = 6;
+    const int buttonRight = 28 + 584 - kSettingsCardPadding;
+    const int cancelX = buttonRight - buttonW;
+    const int applyX = cancelX - buttonGap - buttonW;
+    const int okX = applyX - buttonGap - buttonW;
+    if (PtInUiBox(pt, okX, footerY, buttonW, 34)) return HoverOk;
+    if (PtInUiBox(pt, applyX, footerY, buttonW, 34)) return HoverApply;
+    if (PtInUiBox(pt, cancelX, footerY, buttonW, 34)) return HoverCancel;
     return HoverNone;
 }
 
@@ -3351,13 +3571,15 @@ int HitTestSettingsTopControl(POINT pt) {
 
     pt = SettingsViewportPoint(pt);
     if (pt.y < 0) return HoverNone;
-    if (HasSupporterBadge() && PtInUiBox(pt, 448, 28, 160, 32)) return HoverSupporterBadge;
-    if (!HasSupporterBadge() && PtInUiBox(pt, 448, 30, 160, 28)) return HoverSupport;
+    const int supportMaxW = 154;
+    const int supportX = 28 + 584 - kSettingsCardPadding - supportMaxW;
+    if (HasSupporterBadge() && PtInUiBox(pt, supportX, 28, supportMaxW, 32)) return HoverSupporterBadge;
+    if (!HasSupporterBadge() && PtInUiBox(pt, supportX, 30, supportMaxW, 28)) return HoverSupport;
     return HoverNone;
 }
 
 int HitTestSettingsDialogControl(HWND hwnd, POINT pt) {
-    if (!g_settingsInfoDialogOpen) return HoverNone;
+    if (!g_settingsInfoDialogOpen && !g_hotkeyDialogOpen) return HoverNone;
     pt = SettingsViewportPoint(pt);
     if (pt.y < 0) return HoverNone;
 
@@ -3366,6 +3588,16 @@ int HitTestSettingsDialogControl(HWND hwnd, POINT pt) {
 
     RECT okRect = SettingsDialogOkBox(hwnd);
     if (PtInRect(&okRect, pt)) return HoverDialogOk;
+
+    if (g_hotkeyDialogOpen) {
+        RECT screenshotRect = HotkeyDialogScreenshotBox(hwnd);
+        if (PtInRect(&screenshotRect, pt)) return HoverScreenshotHotkey;
+
+        RECT fullscreenRect = HotkeyDialogFullscreenBox(hwnd);
+        if (PtInRect(&fullscreenRect, pt)) return HoverFullscreenHotkey;
+
+        return HoverNone;
+    }
 
     RECT linkRect = SettingsDialogLinkBox(hwnd);
     if (PtInRect(&linkRect, pt)) return HoverDialogLink;
@@ -3393,13 +3625,14 @@ void UpdateSettingsHover(HWND hwnd, POINT pt) {
     if (nextHover == HoverNone) {
         nextHover = HitTestSettingsDialogControl(hwnd, pt);
     }
-    if (nextHover == HoverNone && !g_settingsInfoDialogOpen) {
+    bool dialogOpen = g_settingsInfoDialogOpen || g_hotkeyDialogOpen;
+    if (nextHover == HoverNone && !dialogOpen) {
         nextHover = HitTestSettingsTopControl(pt);
     }
-    if (nextHover == HoverNone && !g_settingsInfoDialogOpen) {
+    if (nextHover == HoverNone && !dialogOpen) {
         nextHover = HitTestSettingsFooterControl(hwnd, pt);
     }
-    if (nextHover == HoverNone && !g_settingsInfoDialogOpen) {
+    if (nextHover == HoverNone && !dialogOpen) {
         nextHover = HitTestSettingsControl(SettingsContentPoint(pt));
     }
     if (nextHover != g_hoverControl) {
@@ -4179,6 +4412,17 @@ void DrawValuePill(HDC dc, int x, int y, int value) {
     DrawTextLine(dc, text.c_str(), rect, g_sectionFont, g_theme.titleText, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
+void DrawHotkeyPill(HDC dc, int x, int y, int w, const std::wstring& text, bool recording, bool hovered) {
+    COLORREF fill = recording ? g_theme.primary
+                              : hovered ? g_theme.controlHover : g_theme.control;
+    COLORREF border = recording ? g_theme.primaryHover : g_theme.controlBorder;
+    DrawLiquidGlassPanel(dc, x, y, w, 30, 9, fill, border);
+    RECT rect = UiBox(x, y, w, 30);
+    COLORREF textColor = recording ? Rgb(255, 255, 255) : g_theme.titleText;
+    DrawTextLine(dc, text.c_str(), rect, g_uiFont, textColor,
+                 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+
 void DrawSlider(HDC dc, int x, int y, int w, int value, bool hovered, int control) {
     int amount = std::max(InteractionPercent(control), hovered ? 1 : 0);
     if (hovered && amount < 18) {
@@ -4276,59 +4520,63 @@ void DrawContentPreviewScene(HDC dc, int x, int y, int w, int h, bool hdr, int s
                        static_cast<Gdiplus::REAL>(pr));
     graphics.SetClip(&clipPath);
 
+    auto pxAt = [&](float amount) -> Gdiplus::REAL {
+        return static_cast<Gdiplus::REAL>(px) + static_cast<Gdiplus::REAL>(pw) * amount;
+    };
+    auto pyAt = [&](float amount) -> Gdiplus::REAL {
+        return static_cast<Gdiplus::REAL>(py) + static_cast<Gdiplus::REAL>(ph) * amount;
+    };
+    auto wScale = [&](float amount) -> Gdiplus::REAL {
+        return static_cast<Gdiplus::REAL>(pw) * amount;
+    };
+    auto hScale = [&](float amount) -> Gdiplus::REAL {
+        return static_cast<Gdiplus::REAL>(ph) * amount;
+    };
+
     COLORREF sun = hdr ? Rgb(255, 250, 191) : SdrArtworkColor(Rgb(244, 214, 128), sdrBrightness);
     if (hdr) {
         Gdiplus::SolidBrush glow(Gdiplus::Color(80, 255, 249, 191));
-        graphics.FillEllipse(&glow,
-                             static_cast<Gdiplus::REAL>(px + pw - Ui(78)),
-                             static_cast<Gdiplus::REAL>(py + Ui(10)),
-                             static_cast<Gdiplus::REAL>(Ui(84)),
-                             static_cast<Gdiplus::REAL>(Ui(84)));
+        Gdiplus::REAL glowSize = std::min(wScale(0.34f), hScale(1.18f));
+        graphics.FillEllipse(&glow, pxAt(0.78f) - glowSize / 2.0f, pyAt(0.30f) - glowSize / 2.0f,
+                             glowSize, glowSize);
     }
     Gdiplus::SolidBrush sunBrush(GdiColor(sun));
-    graphics.FillEllipse(&sunBrush,
-                         static_cast<Gdiplus::REAL>(px + pw - Ui(58)),
-                         static_cast<Gdiplus::REAL>(py + Ui(20)),
-                         static_cast<Gdiplus::REAL>(Ui(28)),
-                         static_cast<Gdiplus::REAL>(Ui(28)));
+    Gdiplus::REAL sunSize = std::min(wScale(0.12f), hScale(0.44f));
+    graphics.FillEllipse(&sunBrush, pxAt(0.78f) - sunSize / 2.0f, pyAt(0.30f) - sunSize / 2.0f,
+                         sunSize, sunSize);
 
     COLORREF rearMountain = hdr ? Rgb(39, 97, 120) : SdrArtworkColor(Rgb(59, 95, 112), sdrBrightness);
     COLORREF frontMountain = hdr ? Rgb(27, 145, 93) : SdrArtworkColor(Rgb(49, 127, 88), sdrBrightness);
     Gdiplus::SolidBrush rearBrush(GdiColor(rearMountain));
     Gdiplus::SolidBrush frontBrush(GdiColor(frontMountain));
     Gdiplus::PointF rear[4] = {
-        Gdiplus::PointF(static_cast<Gdiplus::REAL>(px - Ui(8)), static_cast<Gdiplus::REAL>(py + ph - Ui(28))),
-        Gdiplus::PointF(static_cast<Gdiplus::REAL>(px + Ui(58)), static_cast<Gdiplus::REAL>(py + Ui(36))),
-        Gdiplus::PointF(static_cast<Gdiplus::REAL>(px + Ui(132)), static_cast<Gdiplus::REAL>(py + ph - Ui(28))),
-        Gdiplus::PointF(static_cast<Gdiplus::REAL>(px + pw + Ui(8)), static_cast<Gdiplus::REAL>(py + ph - Ui(28)))
+        Gdiplus::PointF(pxAt(-0.04f), pyAt(0.58f)),
+        Gdiplus::PointF(pxAt(0.24f), pyAt(0.36f)),
+        Gdiplus::PointF(pxAt(0.50f), pyAt(0.58f)),
+        Gdiplus::PointF(pxAt(1.04f), pyAt(0.58f))
     };
     graphics.FillPolygon(&rearBrush, rear, 4);
 
     Gdiplus::PointF front[5] = {
-        Gdiplus::PointF(static_cast<Gdiplus::REAL>(px - Ui(10)), static_cast<Gdiplus::REAL>(py + ph - Ui(18))),
-        Gdiplus::PointF(static_cast<Gdiplus::REAL>(px + Ui(92)), static_cast<Gdiplus::REAL>(py + Ui(52))),
-        Gdiplus::PointF(static_cast<Gdiplus::REAL>(px + Ui(154)), static_cast<Gdiplus::REAL>(py + ph - Ui(18))),
-        Gdiplus::PointF(static_cast<Gdiplus::REAL>(px + pw + Ui(10)), static_cast<Gdiplus::REAL>(py + ph - Ui(18))),
-        Gdiplus::PointF(static_cast<Gdiplus::REAL>(px + pw + Ui(10)), static_cast<Gdiplus::REAL>(py + ph + Ui(8)))
+        Gdiplus::PointF(pxAt(-0.04f), pyAt(0.72f)),
+        Gdiplus::PointF(pxAt(0.38f), pyAt(0.58f)),
+        Gdiplus::PointF(pxAt(0.58f), pyAt(0.72f)),
+        Gdiplus::PointF(pxAt(1.04f), pyAt(0.72f)),
+        Gdiplus::PointF(pxAt(1.04f), pyAt(1.10f))
     };
     graphics.FillPolygon(&frontBrush, front, 5);
 
     COLORREF waterTop = hdr ? Rgb(30, 190, 210) : SdrArtworkColor(Rgb(79, 149, 170), sdrBrightness);
     COLORREF waterBottom = hdr ? Rgb(16, 99, 188) : SdrArtworkColor(Rgb(60, 103, 153), sdrBrightness);
     Gdiplus::LinearGradientBrush waterBrush(
-        Gdiplus::RectF(static_cast<Gdiplus::REAL>(px), static_cast<Gdiplus::REAL>(py + ph - Ui(26)),
-                       static_cast<Gdiplus::REAL>(pw), static_cast<Gdiplus::REAL>(Ui(32))),
+        Gdiplus::RectF(pxAt(0.0f), pyAt(0.62f), wScale(1.0f), hScale(0.42f)),
         GdiColor(waterTop), GdiColor(waterBottom), Gdiplus::LinearGradientModeVertical);
-    graphics.FillRectangle(&waterBrush,
-                           static_cast<Gdiplus::REAL>(px),
-                           static_cast<Gdiplus::REAL>(py + ph - Ui(26)),
-                           static_cast<Gdiplus::REAL>(pw),
-                           static_cast<Gdiplus::REAL>(Ui(32)));
+    graphics.FillRectangle(&waterBrush, pxAt(0.0f), pyAt(0.62f), wScale(1.0f), hScale(0.42f));
 
     if (hdr) {
-        Gdiplus::Pen highlight(Gdiplus::Color(170, 255, 255, 255), 1.6f);
-        graphics.DrawLine(&highlight, px + Ui(126), py + ph - Ui(18), px + pw - Ui(32), py + ph - Ui(18));
-        graphics.DrawLine(&highlight, px + Ui(164), py + ph - Ui(10), px + pw - Ui(54), py + ph - Ui(10));
+        Gdiplus::Pen highlight(Gdiplus::Color(170, 255, 255, 255), std::max(1.2f, hScale(0.025f)));
+        graphics.DrawLine(&highlight, pxAt(0.52f), pyAt(0.72f), pxAt(0.88f), pyAt(0.72f));
+        graphics.DrawLine(&highlight, pxAt(0.66f), pyAt(0.84f), pxAt(0.82f), pyAt(0.84f));
     }
 
     graphics.ResetClip();
@@ -4352,7 +4600,13 @@ void DrawSdrHdrComparisonAt(HDC dc, int leftX, int y, int imageW, int imageH, in
 }
 
 void DrawSdrHdrComparison(HDC dc, const SettingsLayout& layout) {
-    DrawSdrHdrComparisonAt(dc, 56, layout.brightnessTop + 48, 246, 74, 36);
+    int leftX = 0;
+    int topY = 0;
+    int imageW = 0;
+    int imageH = 0;
+    int gap = 0;
+    BrightnessPreviewLayout(layout, &leftX, &topY, &imageW, &imageH, &gap);
+    DrawSdrHdrComparisonAt(dc, leftX, topY, imageW, imageH, gap);
 }
 
 template <typename Fn>
@@ -4839,15 +5093,19 @@ void UpdateHdrPreviewWindow(HWND hwnd) {
     if (!hwnd || !g_hdrPreviewWindow) return;
 
     SettingsLayout layout = BuildSettingsLayout(SettingsDraftUsesSystemSwitching());
-    const int imageW = 246;
-    const int imageH = 74;
-    const int rightX = 56 + imageW + 36;
-    const int contentY = layout.brightnessTop + 48;
+    int leftX = 0;
+    int contentY = 0;
+    int imageW = 0;
+    int imageH = 0;
+    int gap = 0;
+    BrightnessPreviewLayout(layout, &leftX, &contentY, &imageW, &imageH, &gap);
+    const int rightX = leftX + imageW + gap;
     int appearOffset = (1000 - ClampInt(g_settingsWindowAnim, 0, 1000)) / 80;
     int visibleY = contentY - g_settingsScrollY + appearOffset;
     int viewportH = SettingsScrollableViewportHeight(hwnd);
     bool fullyVisible = visibleY >= 0 && visibleY + imageH <= viewportH;
-    bool shouldShow = fullyVisible && !g_settingsInfoDialogOpen && !IsIconic(hwnd);
+    bool shouldShow = fullyVisible && !g_languageDropdownOpen && !g_settingsInfoDialogOpen &&
+                      !g_hotkeyDialogOpen && !IsIconic(hwnd);
 
     int px = Ui(rightX);
     int py = Ui(kSettingsTitleBarHeight + visibleY);
@@ -4891,7 +5149,7 @@ void DrawCardSeparator(HDC dc, int x, int y, int w) {
 
 void DrawTimeStepper(HDC dc, const SettingsLayout& layout, const wchar_t* label, int y, int hour, int minute,
                      bool minusHover, bool plusHover, int minusControl, int plusControl) {
-    DrawSettingRowText(dc, label, 64, y, 210);
+    DrawSettingRowText(dc, label, layout.cardX + kSettingsCardPadding, y, 210);
     int minusAmount = std::max(InteractionPercent(minusControl), minusHover ? 1 : 0);
     int plusAmount = std::max(InteractionPercent(plusControl), plusHover ? 1 : 0);
     DrawLiquidGlassPanel(dc, TimeStepperMinusX(layout), y - 4, 28, 28, 8,
@@ -5188,9 +5446,15 @@ void DrawSettingsFooter(HDC dc, int visibleHeight) {
     FillRect(dc, &footerRect, g_windowBrush);
 
     int footerY = footerTop + 19;
+    const int buttonW = 84;
+    const int buttonGap = 6;
+    const int buttonRight = 28 + 584 - kSettingsCardPadding;
+    const int cancelX = buttonRight - buttonW;
+    const int applyX = cancelX - buttonGap - buttonW;
+    const int okX = applyX - buttonGap - buttonW;
 
     std::wstring version = AppVersionLabel();
-    RECT versionRect = UiBox(54, footerY, 70, 34);
+    RECT versionRect = UiBox(28 + kSettingsCardPadding, footerY, 70, 34);
     DrawTextLine(dc, version.c_str(), versionRect, g_smallFont, g_theme.mutedText,
                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     bool unsaved = SettingsDraftHasUnsavedChanges();
@@ -5198,9 +5462,9 @@ void DrawSettingsFooter(HDC dc, int visibleHeight) {
         DrawUnsavedBadge(dc, 132, footerY + 4);
     }
 
-    DrawFooterButton(dc, 348, footerY, 84, T(TxtOk), true, IsHover(HoverOk), HoverOk);
-    DrawFooterButton(dc, 438, footerY, 84, T(TxtApply), false, IsHover(HoverApply), HoverApply);
-    DrawFooterButton(dc, 528, footerY, 84, T(TxtCancel), false, IsHover(HoverCancel), HoverCancel);
+    DrawFooterButton(dc, okX, footerY, buttonW, T(TxtOk), true, IsHover(HoverOk), HoverOk);
+    DrawFooterButton(dc, applyX, footerY, buttonW, T(TxtApply), false, IsHover(HoverApply), HoverApply);
+    DrawFooterButton(dc, cancelX, footerY, buttonW, T(TxtCancel), false, IsHover(HoverCancel), HoverCancel);
 }
 
 void DrawTextBlock(HDC dc, const std::wstring& text, RECT rect, HFONT font, COLORREF color, UINT format) {
@@ -5258,6 +5522,60 @@ void DrawSettingsInfoDialog(HDC dc, HWND hwnd) {
                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     int underlineWidth = std::min(TextWidthLogical(dc, T(TxtMenuNightLightSettings), g_uiFont), w - 104);
     DrawRoundedFill(dc, x + 74, y + 146, underlineWidth, 1, 1, linkColor, linkColor);
+
+    DrawRoundedAlphaFill(dc, x, y + h - 64, w, 1, 1,
+                         g_theme.dark ? Rgb(255, 255, 255) : Rgb(0, 0, 0),
+                         g_theme.dark ? 24 : 16);
+    DrawDialogButton(dc, x + w - 102, y + h - 54, 78, T(TxtOk), HoverDialogOk);
+}
+
+void DrawHotkeyDialog(HDC dc, HWND hwnd) {
+    if (!g_hotkeyDialogOpen) return;
+
+    int dialogAmount = std::max(260, g_settingsDialogAnim);
+    DrawRoundedAlphaFill(dc, 0, 0, kSettingsClientWidth, SettingsContentClientHeight(hwnd), 0,
+                         Rgb(0, 0, 0), AlphaScale(g_theme.dark ? 118 : 72, dialogAmount));
+
+    RECT box = SettingsDialogBox(hwnd);
+    int x = FromUi(box.left);
+    int y = FromUi(box.top);
+    int w = FromUi(box.right - box.left);
+    int h = FromUi(box.bottom - box.top);
+
+    DrawRoundedAlphaFill(dc, x + 3, y + 5, w, h, 8, Rgb(0, 0, 0), AlphaScale(g_theme.dark ? 130 : 34, dialogAmount));
+    DrawLiquidGlassPanel(dc, x, y, w, h, 8, g_theme.elevated, g_theme.controlBorder);
+
+    RECT titleRect = UiBox(x + 24, y + 18, w - 70, 26);
+    DrawTextLine(dc, T(TxtScreenshotHotkeys), titleRect, g_sectionFont, g_theme.titleText,
+                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    bool closeHover = IsHover(HoverDialogClose);
+    bool closePressed = g_pressedControl == HoverDialogClose;
+    if (closeHover || closePressed) {
+        DrawLiquidGlassPanel(dc, x + w - 46, y + 12, 32, 32, 8,
+                             g_theme.controlHover, g_theme.controlHover, HoverDialogClose);
+    }
+    DrawCloseIcon(dc, x + w - 35, y + 23 + (closePressed ? 1 : 0), 10, g_theme.text);
+
+    RECT row1 = UiBox(x + 28, y + 72, w - 56, 30);
+    RECT row2 = UiBox(x + 28, y + 118, w - 56, 30);
+    DrawSettingsRowHoverBox(dc, x + 20, y + 67, w - 40, 40, InteractionPercent(HoverScreenshotHotkey));
+    DrawSettingsRowHoverBox(dc, x + 20, y + 113, w - 40, 40, InteractionPercent(HoverFullscreenHotkey));
+    DrawTextLine(dc, T(TxtHotkeyScreenshot), row1, g_uiFont, g_theme.text,
+                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    DrawTextLine(dc, T(TxtHotkeyFullscreen), row2, g_uiFont, g_theme.text,
+                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    bool recordingScreenshot = g_recordingHotkey == HoverScreenshotHotkey;
+    bool recordingFullscreen = g_recordingHotkey == HoverFullscreenHotkey;
+    std::wstring screenshotText = recordingScreenshot ? T(TxtHotkeyRecording)
+        : HotkeyText(g_config.screenshotHotkeyMod, g_config.screenshotHotkeyVk);
+    std::wstring fullscreenText = recordingFullscreen ? T(TxtHotkeyRecording)
+        : HotkeyText(g_config.fullscreenHotkeyMod, g_config.fullscreenHotkeyVk);
+    DrawHotkeyPill(dc, FromUi(HotkeyDialogScreenshotBox(hwnd).left), FromUi(HotkeyDialogScreenshotBox(hwnd).top), 150,
+                   screenshotText, recordingScreenshot, IsHover(HoverScreenshotHotkey));
+    DrawHotkeyPill(dc, FromUi(HotkeyDialogFullscreenBox(hwnd).left), FromUi(HotkeyDialogFullscreenBox(hwnd).top), 150,
+                   fullscreenText, recordingFullscreen, IsHover(HoverFullscreenHotkey));
 
     DrawRoundedAlphaFill(dc, x, y + h - 64, w, 1, 1,
                          g_theme.dark ? Rgb(255, 255, 255) : Rgb(0, 0, 0),
@@ -5965,22 +6283,22 @@ void DrawHeroCard(HDC dc, const SettingsLayout& layout) {
                                            : std::wstring(T(TxtUnknownPercent));
     std::wstring headline = mode + L"  " + level;
 
-    RECT labelRect = UiBox(x + 28, y + 18, 230, 22);
+    RECT labelRect = UiBox(x + kSettingsCardPadding, y + kSettingsCardTopPadding, 230, 22);
     DrawTextLine(dc, T(TxtCurrentState), labelRect, g_sectionFont, g_theme.titleText,
                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-    RECT headlineRect = UiBox(x + 28, y + 46, 360, 34);
+    RECT headlineRect = UiBox(x + kSettingsCardPadding, y + 36, 360, 34);
     DrawTextLine(dc, headline.c_str(), headlineRect, g_heroFont, g_theme.titleText,
                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     std::wstring status = HeroStatusText();
-    RECT statusRect = UiBox(x + 28, y + 84, 390, 22);
+    RECT statusRect = UiBox(x + kSettingsCardPadding, y + 72, 390, 22);
     DrawTextLine(dc, status.c_str(), statusRect, g_smallFont, g_theme.mutedText,
                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-    DrawStatusPill(dc, x + w - 176, y + 26, 148, HdrPillText(),
+    DrawStatusPill(dc, x + w - kSettingsCardPadding - 148, y + kSettingsCardTopPadding, 148, HdrPillText(),
                    g_lastHdrTargetCount > 0 ? Rgb(34, 197, 94) : Rgb(245, 158, 11));
-    DrawStatusPill(dc, x + w - 176, y + 64, 148,
+    DrawStatusPill(dc, x + w - kSettingsCardPadding - 148, y + 48, 148,
                    g_settingsDraft.autoRestoreManualChanges ? T(TxtRestoreOn)
                                                             : T(TxtRestoreOff),
                    g_settingsDraft.autoRestoreManualChanges ? Rgb(34, 197, 94) : Rgb(148, 163, 184));
@@ -5990,9 +6308,9 @@ void DrawHeroCard(HDC dc, const SettingsLayout& layout) {
         bool dismissHover = IsHover(HoverHdrCalibrationDismiss);
         bool calibrationPressed = g_pressedControl == HoverHdrCalibration;
         bool dismissPressed = g_pressedControl == HoverHdrCalibrationDismiss;
-        int calloutX = x + 28;
+        int calloutX = x + kSettingsCardPadding;
         int calloutY = HdrCalibrationCalloutY(layout);
-        int calloutW = w - 56;
+        int calloutW = w - kSettingsCardPadding * 2;
         COLORREF fill = BlendColor(g_theme.elevated, g_theme.control, calibrationHover ? 18 : 0);
         COLORREF border = BlendColor(g_theme.elevated, g_theme.controlBorderHover,
                                      calibrationHover || dismissHover ? 30 : 0);
@@ -6040,18 +6358,24 @@ void DrawSettingsChrome(HWND hwnd, HDC dc) {
 
     int visibleHeight = SettingsContentClientHeight(hwnd);
     DrawWindowGlassBackdrop(dc, visibleHeight);
-    const int sectionX = 56;
-    const int rowX = 64;
-    const int titlePadY = 17;
-    const int controlX = 548;
+    const int titlePadY = kSettingsCardTopPadding;
     bool canFollow = CanFollowWindowsNightLight();
     bool useSystem = g_settingsDraft.followNightLight && canFollow;
     SettingsLayout layout = BuildSettingsLayout(useSystem);
+    const int sectionX = layout.cardX + kSettingsCardPadding;
+    const int rowX = sectionX;
+    const int contentW = layout.cardW - kSettingsCardPadding * 2;
+    const int controlX = layout.cardX + layout.cardW - kSettingsCardPadding - 44;
     g_settingsScrollY = ClampInt(g_settingsScrollY, 0, std::max(0, layout.footerY - (visibleHeight - kSettingsFooterAreaHeight)));
 
     POINT oldOrigin = {};
     int appearOffset = (1000 - ClampInt(g_settingsWindowAnim, 0, 1000)) / 80;
     SetViewportOrgEx(dc, 0, Ui(kSettingsTitleBarHeight) - Ui(g_settingsScrollY) + Ui(appearOffset), &oldOrigin);
+
+    // 裁剪区域：防止滚动内容绘制到标题栏区域（device y < kSettingsTitleBarHeight）
+    HRGN contentClip = CreateRectRgn(0, Ui(kSettingsTitleBarHeight), client.right, client.bottom);
+    SelectClipRgn(dc, contentClip);
+    DeleteObject(contentClip);
 
     DrawAppMark(dc, layout.headerIconX, layout.headerIconY);
     RECT title = UiBox(layout.headerTitleX, layout.headerTitleY,
@@ -6089,7 +6413,7 @@ void DrawSettingsChrome(HWND hwnd, HDC dc) {
     DrawSettingRowText(dc, T(TxtDay), rowX, row1, 120);
     DrawSlider(dc, sliderX, row1 - 2, sliderW, g_settingsDraft.dayBrightness, IsHover(HoverDaySlider), HoverDaySlider);
     DrawValuePill(dc, valueX, row1 - 9, g_settingsDraft.dayBrightness);
-    DrawCardSeparator(dc, 56, row2 - 11, 528);
+    DrawCardSeparator(dc, sectionX, row2 - 11, contentW);
     DrawSettingRowText(dc, T(TxtNight), rowX, row2, 120);
     DrawSlider(dc, sliderX, row2 - 2, sliderW, g_settingsDraft.nightBrightness, IsHover(HoverNightSlider), HoverNightSlider);
     DrawValuePill(dc, valueX, row2 - 9, g_settingsDraft.nightBrightness);
@@ -6114,7 +6438,7 @@ void DrawSettingsChrome(HWND hwnd, HDC dc) {
                                          InteractionPercent(HoverDayPlus)));
         DrawTimeStepper(dc, layout, T(TxtNightStarts), layout.switchNightY, g_settingsDraft.nightStartHour, g_settingsDraft.nightStartMinute,
                         IsHover(HoverNightMinus), IsHover(HoverNightPlus), HoverNightMinus, HoverNightPlus);
-        DrawCardSeparator(dc, 56, layout.switchDayY - 10, 528);
+        DrawCardSeparator(dc, sectionX, layout.switchDayY - 10, contentW);
         DrawTimeStepper(dc, layout, T(TxtDayStarts), layout.switchDayY, g_settingsDraft.dayStartHour, g_settingsDraft.dayStartMinute,
                         IsHover(HoverDayMinus), IsHover(HoverDayPlus), HoverDayMinus, HoverDayPlus);
     }
@@ -6142,19 +6466,26 @@ void DrawSettingsChrome(HWND hwnd, HDC dc) {
     DrawSettingRowText(dc, T(TxtAutoRestoreManual), rowX, row1, 330);
     DrawToggle(dc, controlX, row1 + 2, g_settingsDraft.autoRestoreManualChanges, IsHover(HoverAutoRestore), HoverAutoRestore);
     if (IsStartupFeatureAvailable()) {
-        DrawCardSeparator(dc, 56, row2 - 10, 528);
+        DrawCardSeparator(dc, sectionX, row2 - 10, contentW);
         DrawSettingRowText(dc, T(TxtStartWithWindows), rowX, row2, 330);
         DrawToggle(dc, controlX, row2 + 2, g_settingsDraft.startWithWindows, IsHover(HoverStartup), HoverStartup);
     }
+    DrawCardSeparator(dc, sectionX, layout.hotkeyRow1 - 10, contentW);
+    DrawSettingRowText(dc, T(TxtScreenshotHotkeys), rowX, layout.hotkeyRow1, 330);
+    DrawHotkeyPill(dc, layout.languageSegmentX, layout.hotkeyRow1 - 5, layout.languageSegmentW,
+                   T(TxtHotkeyGroup), false, IsHover(HoverHotkeySettings));
 
+    // 移除裁剪区域，恢复正常绘制（footer/scrollbar/tooltip 需要全区域访问）
+    SelectClipRgn(dc, NULL);
     DrawLanguageDropdown(dc, layout);
     SetViewportOrgEx(dc, oldOrigin.x, oldOrigin.y, NULL);
     DrawSettingsFooter(dc, visibleHeight);
     DrawSettingsScrollbar(dc, layout, visibleHeight);
-    if (IsSupportFeatureAvailable() && !g_settingsInfoDialogOpen && IsHover(HoverSupporterBadge)) {
+    if (IsSupportFeatureAvailable() && !g_settingsInfoDialogOpen && !g_hotkeyDialogOpen && IsHover(HoverSupporterBadge)) {
         DrawSupporterTooltip(dc, 408, 66);
     }
     DrawSettingsInfoDialog(dc, hwnd);
+    DrawHotkeyDialog(dc, hwnd);
     SetViewportOrgEx(dc, contentOrigin.x, contentOrigin.y, NULL);
     DrawSettingsTitleTooltip(dc);
 }
@@ -6249,12 +6580,48 @@ void CloseSettingsInfoDialog(HWND hwnd) {
     UpdateWindow(hwnd);
 }
 
+void ShowHotkeyDialog(HWND hwnd) {
+    g_languageDropdownOpen = false;
+    g_settingsInfoDialogOpen = false;
+    g_hotkeyDialogOpen = true;
+    g_pressedControl = 0;
+    ArmSettingsAnimationTimer(hwnd);
+    UpdateHdrPreviewWindow(hwnd);
+    InvalidateRect(hwnd, NULL, FALSE);
+}
+
+void CloseHotkeyDialog(HWND hwnd) {
+    if (!g_hotkeyDialogOpen) return;
+    g_hotkeyDialogOpen = false;
+    g_pressedControl = 0;
+    if (g_recordingHotkey != 0) {
+        g_recordingHotkey = 0;
+        RegisterAppHotkeys();
+    }
+    if (g_hoverControl == HoverDialogOk || g_hoverControl == HoverDialogClose ||
+        g_hoverControl == HoverScreenshotHotkey || g_hoverControl == HoverFullscreenHotkey) {
+        g_hoverControl = HoverNone;
+    }
+    ArmSettingsAnimationTimer(hwnd);
+    UpdateHdrPreviewWindow(hwnd);
+    InvalidateRect(hwnd, NULL, FALSE);
+    UpdateWindow(hwnd);
+}
+
+void StartHotkeyRecording(HWND hwnd, int control) {
+    if (control != HoverScreenshotHotkey && control != HoverFullscreenHotkey) return;
+    g_recordingHotkey = control;
+    UnregisterAppHotkeys();
+    ArmSettingsAnimationTimer(hwnd);
+    InvalidateRect(hwnd, NULL, FALSE);
+}
+
 void OpenNightLightSettings(HWND hwnd) {
     ShellExecuteW(hwnd, L"open", L"ms-settings:nightlight", NULL, NULL, SW_SHOWNORMAL);
 }
 
 void HandleSettingsClick(HWND hwnd, POINT pt) {
-    if (g_settingsInfoDialogOpen) {
+    if (g_settingsInfoDialogOpen || g_hotkeyDialogOpen) {
         return;
     }
 
@@ -6283,6 +6650,7 @@ void HandleSettingsClick(HWND hwnd, POINT pt) {
         if (option >= 0) {
             const LanguageOption* languages = LanguageOptions();
             g_languageDropdownOpen = false;
+            UpdateHdrPreviewWindow(hwnd);
             ArmSettingsAnimationTimer(hwnd);
             ApplySettingsLanguageChoice(hwnd, languages[option].id);
             InvalidateRect(hwnd, NULL, FALSE);
@@ -6290,12 +6658,14 @@ void HandleSettingsClick(HWND hwnd, POINT pt) {
         }
 
         g_languageDropdownOpen = false;
+        UpdateHdrPreviewWindow(hwnd);
         ArmSettingsAnimationTimer(hwnd);
         InvalidateRect(hwnd, NULL, FALSE);
     }
 
     if (PtInUiBox(pt, layout.languageSegmentX, layout.languageSegmentY, layout.languageSegmentW, layout.languageSegmentH)) {
         g_languageDropdownOpen = !g_languageDropdownOpen;
+        UpdateHdrPreviewWindow(hwnd);
         ArmSettingsAnimationTimer(hwnd);
         InvalidateRect(hwnd, NULL, FALSE);
         return;
@@ -6360,6 +6730,11 @@ void HandleSettingsClick(HWND hwnd, POINT pt) {
         InvalidateRect(hwnd, NULL, FALSE);
         return;
     }
+    if (PtInUiBox(pt, layout.languageSegmentX, layout.hotkeyRow1 - 4,
+                  layout.languageSegmentW, 32)) {
+        ShowHotkeyDialog(hwnd);
+        return;
+    }
 
     if (!useSystem && PtInUiBox(pt, TimeStepperMinusX(layout), layout.switchNightY - 4, 28, 28)) {
         AddMinutesToTime(&g_settingsDraft.nightStartHour, &g_settingsDraft.nightStartMinute, -30);
@@ -6397,6 +6772,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         g_settingsDraftActive = true;
         ClearSettingsBrightnessPreview();
         g_settingsInfoDialogOpen = false;
+        g_hotkeyDialogOpen = false;
         g_pressedControl = 0;
         g_settingsScrollY = 0;
         g_hoverControl = HoverNone;
@@ -6506,9 +6882,11 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
             InvalidateRect(hwnd, NULL, FALSE);
             return 0;
         }
-        if (g_settingsInfoDialogOpen) {
+        if (g_settingsInfoDialogOpen || g_hotkeyDialogOpen) {
             int dialogHover = HitTestSettingsDialogControl(hwnd, pt);
-            if (dialogHover == HoverDialogOk || dialogHover == HoverDialogClose || dialogHover == HoverDialogLink) {
+            if (dialogHover == HoverDialogOk || dialogHover == HoverDialogClose ||
+                dialogHover == HoverDialogLink || dialogHover == HoverScreenshotHotkey ||
+                dialogHover == HoverFullscreenHotkey) {
                 g_pressedControl = dialogHover;
                 ArmSettingsAnimationTimer(hwnd);
                 InvalidateRect(hwnd, NULL, FALSE);
@@ -6552,12 +6930,15 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         return 0;
     }
     case WM_MOUSEWHEEL: {
-        if (g_settingsInfoDialogOpen) return 0;
+        if (g_settingsInfoDialogOpen || g_hotkeyDialogOpen) return 0;
         int delta = GET_WHEEL_DELTA_WPARAM(wParam);
         if (delta != 0) {
             bool dropdownWasOpen = g_languageDropdownOpen;
             g_languageDropdownOpen = false;
-            if (dropdownWasOpen) ArmSettingsAnimationTimer(hwnd);
+            if (dropdownWasOpen) {
+                UpdateHdrPreviewWindow(hwnd);
+                ArmSettingsAnimationTimer(hwnd);
+            }
             SetSettingsScrollY(hwnd, g_settingsScrollY - MulDiv(delta, 60, WHEEL_DELTA));
         }
         return 0;
@@ -6591,9 +6972,57 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
             return TRUE;
         }
         break;
+    case WM_KILLFOCUS:
+        if (g_recordingHotkey != 0) {
+            g_recordingHotkey = 0;
+            RegisterAppHotkeys();
+            ArmSettingsAnimationTimer(hwnd);
+            InvalidateRect(hwnd, NULL, FALSE);
+        }
+        break;
+    case WM_SYSKEYDOWN:
     case WM_KEYDOWN:
+        if (g_recordingHotkey != 0) {
+            UINT vk = static_cast<UINT>(wParam);
+            if (vk == VK_ESCAPE) {
+                g_recordingHotkey = 0;
+                RegisterAppHotkeys();
+                ArmSettingsAnimationTimer(hwnd);
+                InvalidateRect(hwnd, NULL, FALSE);
+                return 0;
+            }
+            // 忽略纯修饰键，等待组合键
+            if (vk != VK_CONTROL && vk != VK_SHIFT && vk != VK_MENU &&
+                vk != VK_LWIN && vk != VK_RWIN) {
+                UINT mod = 0;
+                if (GetKeyState(VK_CONTROL) & 0x8000) mod |= MOD_CONTROL;
+                if (GetKeyState(VK_SHIFT) & 0x8000) mod |= MOD_SHIFT;
+                if (GetKeyState(VK_MENU) & 0x8000) mod |= MOD_ALT;
+                if ((GetKeyState(VK_LWIN) | GetKeyState(VK_RWIN)) & 0x8000) mod |= MOD_WIN;
+                if (mod != 0) {
+                    if (g_recordingHotkey == HoverScreenshotHotkey) {
+                        g_config.screenshotHotkeyMod = mod;
+                        g_config.screenshotHotkeyVk = vk;
+                    } else {
+                        g_config.fullscreenHotkeyMod = mod;
+                        g_config.fullscreenHotkeyVk = vk;
+                    }
+                    g_recordingHotkey = 0;
+                    SaveConfig();
+                    RegisterAppHotkeys();
+                    ArmSettingsAnimationTimer(hwnd);
+                    InvalidateRect(hwnd, NULL, FALSE);
+                    return 0;
+                }
+            }
+            return 0;
+        }
         if (g_settingsInfoDialogOpen && (wParam == VK_ESCAPE || wParam == VK_RETURN || wParam == VK_SPACE)) {
             CloseSettingsInfoDialog(hwnd);
+            return 0;
+        }
+        if (g_hotkeyDialogOpen && (wParam == VK_ESCAPE || wParam == VK_RETURN || wParam == VK_SPACE)) {
+            CloseHotkeyDialog(hwnd);
             return 0;
         }
         break;
@@ -6626,10 +7055,16 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                 } else if (pressed == HoverTitleClose) {
                     DestroyWindow(hwnd);
                 } else if (pressed == HoverDialogOk || pressed == HoverDialogClose) {
-                    CloseSettingsInfoDialog(hwnd);
+                    if (g_hotkeyDialogOpen) {
+                        CloseHotkeyDialog(hwnd);
+                    } else {
+                        CloseSettingsInfoDialog(hwnd);
+                    }
                 } else if (pressed == HoverDialogLink) {
                     OpenNightLightSettings(hwnd);
                     CloseSettingsInfoDialog(hwnd);
+                } else if (pressed == HoverScreenshotHotkey || pressed == HoverFullscreenHotkey) {
+                    StartHotkeyRecording(hwnd, pressed);
                 } else if (pressed == HoverOk) {
                     ApplySettingsDraft(hwnd, true);
                 } else if (pressed == HoverApply) {
@@ -6698,11 +7133,16 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         KillTimer(hwnd, kSettingsAnimationTimer);
         DestroyHdrPreviewWindow();
         RestoreSettingsBrightnessPreviewIfNeeded();
+        if (g_recordingHotkey != 0) {
+            g_recordingHotkey = 0;
+            RegisterAppHotkeys();
+        }
         g_settingsWindow = NULL;
         g_settingsDraftActive = false;
         g_draggingBrightnessId = 0;
         g_languageDropdownOpen = false;
         g_settingsInfoDialogOpen = false;
+        g_hotkeyDialogOpen = false;
         g_pressedControl = 0;
         g_settingsScrollY = 0;
         g_hoverControl = HoverNone;
@@ -6894,6 +7334,25 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
             PostMessageW(hwnd, kApplyMessage, TRUE, 0);
         }
         return TRUE;
+    case WM_HOTKEY:
+        if (wParam == kHotkeyIdScreenshot) {
+            LaunchHdrScreenshotHelper(hwnd);
+            return 0;
+        }
+        if (wParam == kHotkeyIdFullscreen) {
+            LaunchHdrFullscreenCapture(hwnd);
+            return 0;
+        }
+        break;
+    case kFullscreenDoneMessage:
+        if (wParam) {
+            ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtHotkeyCopied),
+                                 NotificationActionHdrScreenshot);
+        } else {
+            ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtCaptureLaunchFailed),
+                                 NotificationActionDefault);
+        }
+        return 0;
     case kTrayMessage:
         if (LOWORD(lParam) == NIN_BALLOONUSERCLICK) {
             ShowLastNotificationDialog();
@@ -6929,6 +7388,9 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
             return 0;
         case kMenuHdrCalibration:
             OpenHdrCalibration(hwnd);
+            return 0;
+        case kMenuHdrScreenshot:
+            LaunchHdrScreenshotHelper(hwnd);
             return 0;
         case kMenuSupport:
             if (!IsSupportFeatureAvailable()) return 0;
@@ -6994,6 +7456,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int) {
         CloseHandle(mutex);
         return 1;
     }
+    RegisterAppHotkeys();
 
     if (openSettingsOnLaunch) {
         PostMessageW(g_mainWindow, WM_COMMAND, MAKEWPARAM(kMenuSettings, 0), 0);
@@ -7001,7 +7464,11 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int) {
 
     MSG msg = {};
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
-        if (g_settingsWindow && IsDialogMessageW(g_settingsWindow, &msg)) {
+        // 录制快捷键时不让 IsDialogMessageW 吞掉按键消息
+        bool skipDialog = g_recordingHotkey != 0 &&
+                          (msg.message == WM_KEYDOWN || msg.message == WM_KEYUP ||
+                           msg.message == WM_SYSKEYDOWN || msg.message == WM_SYSKEYUP);
+        if (g_settingsWindow && !skipDialog && IsDialogMessageW(g_settingsWindow, &msg)) {
             continue;
         }
         TranslateMessage(&msg);

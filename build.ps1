@@ -20,6 +20,8 @@ $versionHeader = Join-Path $obj 'version.h'
 $manifestTemplate = Join-Path $root 'res\app.manifest.in'
 $manifest = Join-Path $obj 'app.manifest'
 $exe = Join-Path $bin 'HdrSdrBrightness.exe'
+$captureProject = Join-Path $root 'capture\HdrSdrCapture.csproj'
+$captureOut = Join-Path $bin 'capture'
 
 function Get-ProjectVersion {
     param(
@@ -130,6 +132,18 @@ $versionHeaderContent = @"
 
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
+    }
+
+    if (Test-Path -LiteralPath $captureProject) {
+        & dotnet publish $captureProject `
+            -c Release `
+            -r win-x64 `
+            --self-contained false `
+            -p:Platform=x64 `
+            -o $captureOut
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
     }
 } finally {
     Pop-Location
