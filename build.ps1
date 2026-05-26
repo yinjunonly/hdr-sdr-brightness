@@ -121,6 +121,7 @@ $versionHeaderContent = @"
         -Wall `
         -Wextra `
         -Wno-missing-field-initializers `
+        -static `
         -static-libgcc `
         -static-libstdc++ `
         -o $exe `

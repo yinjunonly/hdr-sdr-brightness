@@ -26,6 +26,11 @@ internal static class Program
     private const uint ErrorSuccess = 0;
     private const uint ErrorInsufficientBuffer = 122;
     private const uint WdaExcludeFromCapture = 0x00000011;
+    private const int DwmwaUseImmersiveDarkMode = 20;
+    private const int DwmwaUseImmersiveDarkModeLegacy = 19;
+    private const int DwmwaBorderColor = 34;
+    private const int DwmwaCaptionColor = 35;
+    private const int DwmwaTextColor = 36;
 
     private const uint DxgiFormatR16G16B16A16Float = 10;
     private const uint DxgiFormatR10G10B10A2Unorm = 24;
@@ -49,6 +54,14 @@ internal static class Program
         Console.WriteLine("Capturing the primary monitor by default. Pass --picker to choose a screen/window.");
 
         ToneMapOptions toneMap = ToneMapOptions.FromArgs(args);
+        bool explicitOutput = HasArg(args, "--output");
+        string outputPath = ResolveOutputPath(args);
+
+        string? editFilePath = ArgValue(args, "--edit-file");
+        if (!string.IsNullOrWhiteSpace(editFilePath))
+        {
+            return EditExistingImage(editFilePath, outputPath, !HasArg(args, "--skip-initial-copy"));
+        }
 
         if (!GraphicsCaptureSession.IsSupported())
         {
@@ -56,8 +69,6 @@ internal static class Program
             return 1;
         }
 
-        bool explicitOutput = HasArg(args, "--output");
-        string outputPath = ResolveOutputPath(args);
         DirectXPixelFormat format = HasArg(args, "--bgra8")
             ? DirectXPixelFormat.B8G8R8A8UIntNormalized
             : DirectXPixelFormat.R16G16B16A16Float;
@@ -98,7 +109,7 @@ internal static class Program
         {
             exitCode = await CaptureOneFrameAsync(item, winrtDevice, native, format, outputPath, toneMap,
                 selectRegion, !explicitOutput || HasArg(args, "--edit"),
-                HasArg(args, "--discard-output"), diagnostic,
+                HasArg(args, "--discard-output"), explicitOutput, diagnostic,
                 fullscreenClip);
         }
         finally
@@ -709,6 +720,7 @@ internal static class Program
         bool selectRegion,
         bool editAfterCapture,
         bool discardOutput,
+        bool saveFullscreenOutput,
         bool diagnostic,
         bool fullscreenClip = false)
     {
@@ -731,6 +743,19 @@ internal static class Program
                 return 8;
             }
             RunSta(() => CopyBgraToClipboard(result.Width, result.Height, result.Bgra));
+            if (saveFullscreenOutput)
+            {
+                try
+                {
+                    await SaveFullscreenEditImageAsync(outputPath, result.Width, result.Height, result.Bgra);
+                    Console.WriteLine($"Saved edit image: {outputPath}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Save failed: {ex.GetType().Name}: {ex.Message}");
+                    return 8;
+                }
+            }
             Console.WriteLine("Fullscreen screenshot copied to clipboard.");
             return 0;
         }
@@ -1057,14 +1082,56 @@ internal static class Program
         await encoder.FlushAsync();
     }
 
+    private static Task SaveFullscreenEditImageAsync(string path, uint width, uint height, byte[] bgra)
+    {
+        if (!string.Equals(Path.GetExtension(path), ".bmp", StringComparison.OrdinalIgnoreCase))
+        {
+            return SavePngAsync(path, width, height, bgra);
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using Bitmap bitmap = CreateBitmapFromBgra(width, height, bgra);
+        bitmap.Save(path, ImageFormat.Bmp);
+        return Task.CompletedTask;
+    }
+
     private static void ShowPreviewEditor(ReadbackResult result, string defaultOutputPath)
     {
         using Bitmap bitmap = CreateBitmapFromBgra(result.Width, result.Height, result.Bgra);
+        ShowPreviewEditor(bitmap, defaultOutputPath);
+    }
+
+    private static void ShowPreviewEditor(Bitmap source, string defaultOutputPath, bool copyOnShown = true)
+    {
         RunSta(() =>
         {
-            using RegionSelectionForm.PreviewEditorForm editor = new(new Bitmap(bitmap), defaultOutputPath);
+            using RegionSelectionForm.PreviewEditorForm editor = new(new Bitmap(source), defaultOutputPath, copyOnShown);
             editor.ShowDialog();
         });
+    }
+
+    private static int EditExistingImage(string path, string defaultOutputPath, bool copyOnShown)
+    {
+        try
+        {
+            string fullPath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(path));
+            if (!File.Exists(fullPath))
+            {
+                Console.WriteLine($"Image not found: {fullPath}");
+                return 2;
+            }
+
+            using Image loaded = Image.FromFile(fullPath);
+            using Bitmap bitmap = new(loaded);
+            bitmap.SetResolution(96.0f, 96.0f);
+            ShowPreviewEditor(bitmap, defaultOutputPath, copyOnShown);
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Edit failed: {ex.GetType().Name}: {ex.Message}");
+            return 8;
+        }
     }
 
     private static void CopyBgraToClipboard(uint width, uint height, byte[] bgra)
@@ -2007,7 +2074,7 @@ internal static class Program
     private sealed class FloatingToolbarPanel : Panel
     {
         private static readonly Color ToolbarBackColor = Color.FromArgb(28, 31, 34);
-        private static readonly Color ToolbarBorderColor = Color.FromArgb(80, 255, 255, 255);
+        private static readonly Color ToolbarBorderColor = Color.FromArgb(95, 255, 255, 255);
 
         public FloatingToolbarPanel()
         {
@@ -2020,14 +2087,296 @@ internal static class Program
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             e.Graphics.Clear(Parent?.BackColor ?? Color.Black);
 
-            Rectangle rect = new(1, 1, Width - 3, Height - 3);
+            Rectangle shadowRect = new(2, 4, Width - 5, Height - 7);
+            using GraphicsPath shadowPath = RoundedRect(shadowRect, Math.Max(1, shadowRect.Height / 2));
+            using SolidBrush shadow = new(Color.FromArgb(80, 0, 0, 0));
+            e.Graphics.FillPath(shadow, shadowPath);
+
+            Rectangle rect = new(0, 0, Width - 2, Height - 2);
             using GraphicsPath path = RoundedRect(rect, Math.Max(1, rect.Height / 2));
-            using SolidBrush fill = new(ToolbarBackColor);
+            using SolidBrush fill = new(Color.FromArgb(178, ToolbarBackColor));
             using Pen border = new(ToolbarBorderColor, 1.0f);
             e.Graphics.FillPath(fill, path);
             e.Graphics.DrawPath(border, path);
         }
     }
+
+    private sealed class PreviewToolbarControl : Control
+    {
+        private readonly List<PreviewToolbarItem> items = new();
+        private readonly List<OptionPopoverItem> optionItems = new();
+        private int hoveredIndex = -1;
+        private int pressedIndex = -1;
+        private int hoveredOptionIndex = -1;
+        private int pressedOptionIndex = -1;
+        private Rectangle optionsBounds;
+        private bool optionsVisible;
+
+        public event EventHandler? OptionsVisibilityChanged;
+
+        public PreviewToolbarControl()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+            Cursor = Cursors.Default;
+            Height = 62;
+            Width = 820;
+        }
+
+        public bool OptionsVisible => optionsVisible;
+
+        public int PreferredToolbarHeight => optionsVisible ? 118 : 62;
+
+        public void Add(ToolbarAction action, ButtonIcon icon, Action<Rectangle> click, Func<bool>? selected = null, Func<Color>? color = null)
+        {
+            int x = items.Count == 0 ? 14 : items[^1].Rect.Right + 8;
+            if (action is ToolbarAction.Undo or ToolbarAction.PresetLow or ToolbarAction.Save)
+            {
+                x += 13;
+            }
+            Rectangle rect = new(x, 10, 46, 42);
+            items.Add(new PreviewToolbarItem(action, icon, rect, click, selected, color));
+        }
+
+        public void Add(ToolbarAction action, ButtonIcon icon, Action click, Func<bool>? selected = null, Func<Color>? color = null)
+        {
+            Add(action, icon, _ => click(), selected, color);
+        }
+
+        public void ShowOptions(Rectangle anchor, IReadOnlyList<OptionPopoverItem> options)
+        {
+            optionItems.Clear();
+            int width = 24 + options.Count * 42 + Math.Max(0, options.Count - 1) * 8;
+            int left = Math.Clamp(anchor.Left + (anchor.Width - width) / 2, 0, Math.Max(0, Width - width));
+            optionsBounds = new Rectangle(left, 0, width, 48);
+            for (int i = 0; i < options.Count; i++)
+            {
+                OptionPopoverItem item = options[i];
+                Rectangle rect = new(optionsBounds.Left + 12 + i * 50, optionsBounds.Top + 7, 42, 34);
+                optionItems.Add(new OptionPopoverItem(rect, item.Text, item.Color, item.Selected, item.Click));
+            }
+            optionsVisible = optionItems.Count > 0;
+            hoveredOptionIndex = -1;
+            pressedOptionIndex = -1;
+            Height = PreferredToolbarHeight;
+            OptionsVisibilityChanged?.Invoke(this, EventArgs.Empty);
+            Invalidate();
+        }
+
+        public void HideOptions()
+        {
+            if (!optionsVisible && optionItems.Count == 0) return;
+            optionsVisible = false;
+            optionItems.Clear();
+            hoveredOptionIndex = -1;
+            pressedOptionIndex = -1;
+            Height = PreferredToolbarHeight;
+            OptionsVisibilityChanged?.Invoke(this, EventArgs.Empty);
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            e.Graphics.Clear(Parent?.BackColor ?? Color.Black);
+
+            if (optionsVisible)
+            {
+                DrawOptions(e.Graphics);
+            }
+
+            int barTop = BarTop();
+            Rectangle shadowRect = new(2, barTop + 4, Width - 5, 55);
+            using GraphicsPath shadowPath = RoundedRect(shadowRect, Math.Max(1, shadowRect.Height / 2));
+            using SolidBrush shadow = new(Color.FromArgb(80, 0, 0, 0));
+            e.Graphics.FillPath(shadow, shadowPath);
+
+            Rectangle pill = new(0, barTop, Width - 2, 60);
+            using GraphicsPath path = RoundedRect(pill, pill.Height / 2);
+            using SolidBrush fill = new(Color.FromArgb(178, 27, 30, 33));
+            using Pen border = new(Color.FromArgb(95, 255, 255, 255), 1.0f);
+            e.Graphics.FillPath(fill, path);
+            e.Graphics.DrawPath(border, path);
+
+            foreach (PreviewToolbarItem item in items)
+            {
+                Rectangle itemRect = OffsetBarRect(item.Rect);
+                if (item.Action is ToolbarAction.Undo or ToolbarAction.PresetLow or ToolbarAction.Save)
+                {
+                    DrawSeparator(e.Graphics, itemRect.Left - 11);
+                }
+
+                int index = items.IndexOf(item);
+                bool selected = item.Selected?.Invoke() == true;
+                bool hot = index == hoveredIndex || index == pressedIndex;
+                Color iconColor = item.Color?.Invoke() ?? ToolbarIconColor(item.Action, selected);
+                if (hot || selected)
+                {
+                    int size = hot ? 38 : 34;
+                    int cx = itemRect.Left + itemRect.Width / 2;
+                    int cy = itemRect.Top + itemRect.Height / 2;
+                    using GraphicsPath hover = RoundedRect(new Rectangle(cx - size / 2, cy - size / 2, size, size), size / 2);
+                    using SolidBrush hoverBrush = new(Color.FromArgb(hot ? 44 : 28, selected ? 64 : 255, selected ? 178 : 255, selected ? 255 : 255));
+                    e.Graphics.FillPath(hoverBrush, hover);
+                }
+
+                Rectangle iconRect = new(itemRect.Left + 10, itemRect.Top + 8, 26, 26);
+                PillButton.DrawIcon(e.Graphics, iconRect, item.Icon, iconColor);
+            }
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            int optionHit = HitTestOptions(e.Location);
+            int hit = optionHit >= 0 ? -1 : HitTest(e.Location);
+            if (optionHit != hoveredOptionIndex || hit != hoveredIndex)
+            {
+                hoveredOptionIndex = optionHit;
+                hoveredIndex = hit;
+                Cursor = hit >= 0 || optionHit >= 0 ? Cursors.Hand : Cursors.Default;
+                Invalidate();
+            }
+            base.OnMouseMove(e);
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            hoveredIndex = -1;
+            pressedIndex = -1;
+            hoveredOptionIndex = -1;
+            pressedOptionIndex = -1;
+            Cursor = Cursors.Default;
+            Invalidate();
+            base.OnMouseLeave(e);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left)
+            {
+                pressedOptionIndex = HitTestOptions(e.Location);
+                pressedIndex = pressedOptionIndex >= 0 ? -1 : HitTest(e.Location);
+                if (pressedIndex < 0 && pressedOptionIndex < 0)
+                {
+                    HideOptions();
+                }
+                Invalidate();
+            }
+            base.OnMouseDown(e);
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            int pressed = pressedIndex;
+            int pressedOption = pressedOptionIndex;
+            pressedIndex = -1;
+            pressedOptionIndex = -1;
+            if (e.Button == MouseButtons.Left && pressedOption >= 0 && pressedOption == HitTestOptions(e.Location))
+            {
+                Action click = optionItems[pressedOption].Click;
+                HideOptions();
+                click();
+                Invalidate();
+                base.OnMouseUp(e);
+                return;
+            }
+            if (e.Button == MouseButtons.Left && pressed >= 0 && pressed == HitTest(e.Location))
+            {
+                items[pressed].Click(items[pressed].Rect);
+            }
+            Invalidate();
+            base.OnMouseUp(e);
+        }
+
+        private int HitTest(System.Drawing.Point point)
+        {
+            for (int i = 0; i < items.Count; i++)
+            {
+                if (OffsetBarRect(items[i].Rect).Contains(point)) return i;
+            }
+            return -1;
+        }
+
+        private int HitTestOptions(System.Drawing.Point point)
+        {
+            if (!optionsVisible || !optionsBounds.Contains(point)) return -1;
+            for (int i = 0; i < optionItems.Count; i++)
+            {
+                if (optionItems[i].Rect.Contains(point)) return i;
+            }
+            return -1;
+        }
+
+        private int BarTop() => optionsVisible ? 56 : 0;
+
+        private Rectangle OffsetBarRect(Rectangle rect)
+        {
+            return new Rectangle(rect.Left, rect.Top + BarTop(), rect.Width, rect.Height);
+        }
+
+        private void DrawSeparator(Graphics graphics, int x)
+        {
+            using Pen pen = new(Color.FromArgb(70, 255, 255, 255), 1.0f);
+            int barTop = BarTop();
+            graphics.DrawLine(pen, x, barTop + 19, x, barTop + 43);
+        }
+
+        private void DrawOptions(Graphics graphics)
+        {
+            using GraphicsPath shadowPath = RoundedRect(new Rectangle(optionsBounds.Left + 2, optionsBounds.Top + 4, optionsBounds.Width - 4, optionsBounds.Height - 4), (optionsBounds.Height - 4) / 2);
+            using SolidBrush shadow = new(Color.FromArgb(70, 0, 0, 0));
+            graphics.FillPath(shadow, shadowPath);
+
+            Rectangle pill = new(optionsBounds.Left, optionsBounds.Top, optionsBounds.Width - 1, optionsBounds.Height - 1);
+            using GraphicsPath path = RoundedRect(pill, pill.Height / 2);
+            using SolidBrush fill = new(Color.FromArgb(184, 27, 30, 33));
+            using Pen border = new(Color.FromArgb(96, 255, 255, 255), 1.0f);
+            graphics.FillPath(fill, path);
+            graphics.DrawPath(border, path);
+
+            for (int i = 0; i < optionItems.Count; i++)
+            {
+                OptionPopoverItem item = optionItems[i];
+                bool hot = i == hoveredOptionIndex || i == pressedOptionIndex;
+                if (hot || item.Selected)
+                {
+                    int size = item.Selected ? 34 : 32;
+                    int cx = item.Rect.Left + item.Rect.Width / 2;
+                    int cy = item.Rect.Top + item.Rect.Height / 2;
+                    using GraphicsPath hoverPath = RoundedRect(new Rectangle(cx - size / 2, cy - size / 2, size, size), size / 2);
+                    using SolidBrush hoverBrush = new(Color.FromArgb(hot ? 50 : 34, item.Selected ? 64 : 255, item.Selected ? 178 : 255, item.Selected ? 255 : 255));
+                    graphics.FillPath(hoverBrush, hoverPath);
+                }
+
+                if (item.Color.HasValue)
+                {
+                    DrawColorOption(graphics, item.Rect, item.Color.Value, item.Selected);
+                }
+                else
+                {
+                    Color textColor = item.Selected ? Color.FromArgb(64, 178, 255) : Color.FromArgb(225, 229, 232);
+                    TextRenderer.DrawText(graphics, item.Text, Font, item.Rect, textColor,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                }
+            }
+        }
+
+        private static Color ToolbarIconColor(ToolbarAction action, bool selected)
+        {
+            if (action == ToolbarAction.Cancel) return Color.FromArgb(255, 92, 92);
+            if (action == ToolbarAction.Copy) return Color.FromArgb(68, 214, 111);
+            if (selected) return Color.FromArgb(64, 178, 255);
+            return Color.FromArgb(225, 229, 232);
+        }
+    }
+
+    private sealed record PreviewToolbarItem(
+        ToolbarAction Action,
+        ButtonIcon Icon,
+        Rectangle Rect,
+        Action<Rectangle> Click,
+        Func<bool>? Selected,
+        Func<Color>? Color);
 
     private sealed class OptionPopoverItem
     {
@@ -2051,6 +2400,97 @@ internal static class Program
         public Action Click { get; }
     }
 
+    private sealed class PreviewTitleBarControl : Control
+    {
+        private bool closeHot;
+        private bool closePressed;
+
+        public event EventHandler? CloseClicked;
+
+        public PreviewTitleBarControl()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            BackColor = Color.FromArgb(10, 12, 13);
+            ForeColor = Color.FromArgb(235, 239, 242);
+            Height = 52;
+            Dock = DockStyle.Top;
+        }
+
+        public Rectangle CloseButtonBounds => new(Width - 58, 8, 42, 36);
+
+        public bool IsCloseButtonPoint(System.Drawing.Point point) => CloseButtonBounds.Contains(point);
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            e.Graphics.Clear(BackColor);
+            using SolidBrush titleBrush = new(ForeColor);
+            TextRenderer.DrawText(e.Graphics, Text, Font, new Rectangle(14, 0, Math.Max(1, Width - 86), Height),
+                ForeColor, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+
+            Rectangle closeRect = CloseButtonBounds;
+            Color iconColor = closeHot || closePressed ? Color.White : Color.FromArgb(224, 229, 232);
+            if (closeHot || closePressed)
+            {
+                Color closeColor = closePressed
+                    ? Color.FromArgb(198, 35, 48)
+                    : Color.FromArgb(228, 43, 58);
+                using GraphicsPath closePath = RoundedRect(closeRect, 9);
+                using SolidBrush closeBrush = new(closeColor);
+                e.Graphics.FillPath(closeBrush, closePath);
+            }
+
+            using Pen pen = new(iconColor, 2.0f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            int cx = closeRect.Left + closeRect.Width / 2;
+            int cy = closeRect.Top + closeRect.Height / 2;
+            e.Graphics.DrawLine(pen, cx - 6, cy - 6, cx + 6, cy + 6);
+            e.Graphics.DrawLine(pen, cx + 6, cy - 6, cx - 6, cy + 6);
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            bool hot = CloseButtonBounds.Contains(e.Location);
+            if (hot != closeHot)
+            {
+                closeHot = hot;
+                Cursor = closeHot ? Cursors.Hand : Cursors.Default;
+                Invalidate(CloseButtonBounds);
+            }
+            base.OnMouseMove(e);
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            closeHot = false;
+            closePressed = false;
+            Cursor = Cursors.Default;
+            Invalidate(CloseButtonBounds);
+            base.OnMouseLeave(e);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left && CloseButtonBounds.Contains(e.Location))
+            {
+                closePressed = true;
+                Invalidate(CloseButtonBounds);
+            }
+            base.OnMouseDown(e);
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            bool shouldClose = closePressed && e.Button == MouseButtons.Left && CloseButtonBounds.Contains(e.Location);
+            closePressed = false;
+            Invalidate(CloseButtonBounds);
+            if (shouldClose)
+            {
+                CloseClicked?.Invoke(this, EventArgs.Empty);
+            }
+            base.OnMouseUp(e);
+        }
+    }
+
     private static GraphicsPath RoundedRect(Rectangle rect, int radius)
     {
         GraphicsPath path = new();
@@ -2065,37 +2505,67 @@ internal static class Program
 
     public sealed class PreviewEditorForm : Form
     {
+        private enum WindowResizeHit
+        {
+            None,
+            Left,
+            Right,
+            Top,
+            Bottom,
+            TopLeft,
+            TopRight,
+            BottomLeft,
+            BottomRight
+        }
+
         private readonly Bitmap source;
         private readonly string defaultOutputPath;
+        private readonly bool copyOnShown;
         private readonly PictureBox preview = new();
-        private readonly FlowLayoutPanel toolbar = new();
-        private readonly FloatingToolbarPanel toolbarHost = new();
-        private readonly ModernStatusLabel statusLabel = new();
-        private readonly ToolTip toolTip = new();
-        private readonly List<PillButton> toolButtons = new();
-        private readonly List<PillButton> presetButtons = new();
+        private readonly PreviewTitleBarControl titleBar = new();
+        private readonly PreviewToolbarControl toolbar = new();
+        private readonly Panel actionArea = new();
+        private readonly Panel content = new();
         private readonly List<EditOperation> operations = new();
+        private readonly List<EditOperation> redoOperations = new();
         private Bitmap current;
         private EditMode mode = EditMode.None;
         private AdjustmentPreset adjustmentPreset = AdjustmentPreset.Balanced;
+        private int annotationColorIndex;
+        private int shapeStrokeWidth = 4;
+        private int penStrokeWidth = 6;
+        private int mosaicBrushSize = 28;
         private bool dragging;
+        private bool movingWindow;
+        private bool resizingWindow;
+        private WindowResizeHit activeResizeHit = WindowResizeHit.None;
+        private Control? chromeCaptureControl;
+        private System.Drawing.Point windowDragStartScreen;
+        private System.Drawing.Rectangle windowDragStartBounds;
         private System.Drawing.Point dragStart;
         private System.Drawing.Point dragCurrent;
+        private readonly List<System.Drawing.Point> currentPenPoints = new();
 
-        public PreviewEditorForm(Bitmap source, string defaultOutputPath)
+        public PreviewEditorForm(Bitmap source, string defaultOutputPath, bool copyOnShown = true)
         {
             this.source = CloneAsArgb32(source);
             this.current = new Bitmap(this.source);
             this.defaultOutputPath = defaultOutputPath;
+            this.copyOnShown = copyOnShown;
             Text = CaptureText.Get(CaptureString.PreviewTitle);
             StartPosition = FormStartPosition.CenterScreen;
             Size = new System.Drawing.Size(1180, 760);
-            MinimumSize = new System.Drawing.Size(720, 480);
+            MinimumSize = new System.Drawing.Size(900, 520);
             FormBorderStyle = FormBorderStyle.None;
-            Padding = new Padding(1, 1, 1, 0);
-            BackColor = Color.FromArgb(38, 43, 46);
+            Padding = new Padding(0);
+            BackColor = Color.FromArgb(10, 12, 13);
             ForeColor = Color.White;
             Font = new Font(CaptureText.FontFamily, 9.0f, FontStyle.Regular, GraphicsUnit.Point);
+
+            titleBar.Text = Text;
+            titleBar.Font = Font;
+            titleBar.CloseClicked += (_, _) => Close();
+            AttachWindowChromeMouseHandlers(titleBar);
 
             preview.Dock = DockStyle.Fill;
             preview.SizeMode = PictureBoxSizeMode.Zoom;
@@ -2105,72 +2575,54 @@ internal static class Program
             preview.MouseMove += PreviewMouseMove;
             preview.MouseUp += PreviewMouseUp;
             preview.Paint += PreviewPaint;
+            AttachWindowChromeMouseHandlers(preview);
 
-            toolbar.Dock = DockStyle.Top;
-            toolbar.Height = 42;
-            toolbar.FlowDirection = FlowDirection.LeftToRight;
-            toolbar.WrapContents = false;
-            toolbar.Padding = new Padding(0, 2, 0, 0);
-            toolbar.BackColor = Color.FromArgb(28, 31, 34);
+            toolbar.Font = Font;
+            toolbar.Add(ToolbarAction.Cancel, ButtonIcon.Cancel, Close);
+            toolbar.Add(ToolbarAction.ToolMarker, ButtonIcon.Marker, anchor => SelectToolbarTool(EditMode.Marker, anchor), () => mode == EditMode.Marker);
+            toolbar.Add(ToolbarAction.ToolEllipse, ButtonIcon.Ellipse, anchor => SelectToolbarTool(EditMode.Ellipse, anchor), () => mode == EditMode.Ellipse);
+            toolbar.Add(ToolbarAction.ToolPen, ButtonIcon.Pen, anchor => SelectToolbarTool(EditMode.Pen, anchor), () => mode == EditMode.Pen);
+            toolbar.Add(ToolbarAction.ToolMosaic, ButtonIcon.Mosaic, anchor => SelectToolbarTool(EditMode.Mosaic, anchor), () => mode == EditMode.Mosaic);
+            toolbar.Add(ToolbarAction.Color, ButtonIcon.Color, ShowColorOptions, color: () => AnnotationColors[annotationColorIndex]);
+            toolbar.Add(ToolbarAction.Undo, ButtonIcon.Undo, UndoLastEdit);
+            toolbar.Add(ToolbarAction.Redo, ButtonIcon.Redo, RedoLastEdit);
+            toolbar.Add(ToolbarAction.Reset, ButtonIcon.Reset, ResetEdits);
+            toolbar.Add(ToolbarAction.PresetLow, ButtonIcon.Low, () => SetAdjustmentPreset(AdjustmentPreset.Low), () => adjustmentPreset == AdjustmentPreset.Low);
+            toolbar.Add(ToolbarAction.PresetBalanced, ButtonIcon.Balanced, () => SetAdjustmentPreset(AdjustmentPreset.Balanced), () => adjustmentPreset == AdjustmentPreset.Balanced);
+            toolbar.Add(ToolbarAction.PresetHigh, ButtonIcon.High, () => SetAdjustmentPreset(AdjustmentPreset.High), () => adjustmentPreset == AdjustmentPreset.High);
+            toolbar.Add(ToolbarAction.Save, ButtonIcon.Save, SaveToFile);
+            toolbar.Add(ToolbarAction.Copy, ButtonIcon.Done, CopyToClipboardAndClose);
+            toolbar.OptionsVisibilityChanged += (_, _) => LayoutToolbarOverlay();
 
-            AddToolButton(ButtonIcon.Marker, CaptureText.Get(CaptureString.ToolMarkerHint), EditMode.Marker);
-            AddToolButton(ButtonIcon.Mosaic, CaptureText.Get(CaptureString.ToolMosaicHint), EditMode.Mosaic);
-            AddSeparator();
-            AddButton(ButtonIcon.Undo, CaptureText.Get(CaptureString.UndoHint), UndoLastEdit);
-            AddButton(ButtonIcon.Reset, CaptureText.Get(CaptureString.ResetHint), ResetEdits);
-            AddSeparator();
-            AddPresetButton(ButtonIcon.Low, CaptureText.Get(CaptureString.PresetLowHint), AdjustmentPreset.Low);
-            AddPresetButton(ButtonIcon.Balanced, CaptureText.Get(CaptureString.PresetBalancedHint), AdjustmentPreset.Balanced);
-            AddPresetButton(ButtonIcon.High, CaptureText.Get(CaptureString.PresetHighHint), AdjustmentPreset.High);
-            UpdatePresetButtons();
-            AddSeparator();
-            AddButton(ButtonIcon.Save, CaptureText.Get(CaptureString.SaveAsFileHint), SaveToFile);
-            AddButton(ButtonIcon.Cancel, CaptureText.Get(CaptureString.CancelCloseHint), Close);
-            AddButton(ButtonIcon.Done, CaptureText.Get(CaptureString.DoneCopyCloseHint), CopyToClipboardAndClose, true, 112, CaptureText.Get(CaptureString.DoneButton));
+            actionArea.Dock = DockStyle.Bottom;
+            actionArea.Height = 82;
+            actionArea.BackColor = Color.FromArgb(10, 12, 13);
+            actionArea.Padding = new Padding(0);
+            AttachWindowChromeMouseHandlers(actionArea);
 
-            statusLabel.Dock = DockStyle.None;
-            statusLabel.Height = 28;
-            statusLabel.Margin = new Padding(0);
-            statusLabel.Font = Font;
-            statusLabel.Text = string.Empty;
-            statusLabel.Visible = false;
-
-            toolbarHost.Width = 612;
-            toolbarHost.Height = 56;
-            toolbarHost.Padding = new Padding(12, 8, 10, 8);
-            toolbarHost.Controls.Add(toolbar);
-            toolbar.Dock = DockStyle.Fill;
-
-            Panel actionArea = new()
-            {
-                Dock = DockStyle.Bottom,
-                Height = 64,
-                BackColor = Color.FromArgb(10, 12, 13),
-                Padding = new Padding(0)
-            };
-            actionArea.Controls.Add(statusLabel);
-            actionArea.Controls.Add(toolbarHost);
-            actionArea.Resize += (_, _) => LayoutActionAreaControls(actionArea);
-
-            Panel content = new()
-            {
-                Dock = DockStyle.Fill,
-                BackColor = Color.FromArgb(10, 12, 13),
-                Padding = new Padding(0)
-            };
+            content.Dock = DockStyle.Fill;
+            content.BackColor = Color.FromArgb(10, 12, 13);
+            content.Padding = new Padding(0);
+            AttachWindowChromeMouseHandlers(content);
             content.Controls.Add(preview);
             content.Controls.Add(actionArea);
-            preview.Resize += (_, _) => LayoutActionAreaControls(actionArea);
+            content.Controls.Add(toolbar);
+            content.Resize += (_, _) => LayoutToolbarOverlay();
+            preview.Resize += (_, _) => LayoutToolbarOverlay();
 
             Controls.Add(content);
+            Controls.Add(titleBar);
             KeyPreview = true;
-            LayoutActionAreaControls(actionArea);
+            LayoutToolbarOverlay();
         }
 
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
-            CopyToClipboard();
+            if (copyOnShown)
+            {
+                BeginInvoke(CopyToClipboard);
+            }
         }
 
         protected override void OnKeyDown(KeyEventArgs e)
@@ -2185,146 +2637,278 @@ internal static class Program
             {
                 current.Dispose();
                 source.Dispose();
-                toolTip.Dispose();
             }
             base.Dispose(disposing);
         }
 
-        private void AddButton(ButtonIcon icon, string hint, Action action, bool primary = false, int? width = null, string text = "")
+        private void AttachWindowChromeMouseHandlers(Control control)
         {
-            PillButton button = new()
-            {
-                Text = text,
-                Width = width ?? 40,
-                Height = 36,
-                Margin = new Padding(0, 0, 8, 0),
-                Font = Font,
-                Primary = primary,
-                Icon = icon
-            };
-            button.Click += (_, _) => action();
-            toolTip.SetToolTip(button, hint);
-            toolbar.Controls.Add(button);
+            control.MouseDown += WindowChromeMouseDown;
+            control.MouseMove += WindowChromeMouseMove;
+            control.MouseUp += WindowChromeMouseUp;
+            control.MouseLeave += WindowChromeMouseLeave;
         }
 
-        private void AddToolButton(ButtonIcon icon, string hint, EditMode toolMode)
+        private void WindowChromeMouseDown(object? sender, MouseEventArgs e)
         {
-            PillButton button = new()
+            if (e.Button != MouseButtons.Left || sender is not Control control) return;
+            System.Drawing.Point screenPoint = control.PointToScreen(e.Location);
+            System.Drawing.Point clientPoint = PointToClient(screenPoint);
+            WindowResizeHit resizeHit = HitTestResize(clientPoint);
+            if (resizeHit != WindowResizeHit.None)
             {
-                Text = string.Empty,
-                Tag = toolMode,
-                Width = 40,
-                Height = 36,
-                Margin = new Padding(0, 0, 8, 0),
-                Font = Font,
-                Icon = icon
-            };
-            button.Click += (_, _) => SetMode(mode == toolMode ? EditMode.None : toolMode);
-            toolTip.SetToolTip(button, hint);
-            toolButtons.Add(button);
-            toolbar.Controls.Add(button);
+                BeginWindowResize(resizeHit, screenPoint, control);
+                return;
+            }
+            if (control == titleBar && !titleBar.IsCloseButtonPoint(e.Location))
+            {
+                movingWindow = true;
+                windowDragStartScreen = screenPoint;
+                windowDragStartBounds = Bounds;
+                chromeCaptureControl = control;
+                control.Capture = true;
+            }
         }
 
-        private void AddSeparator()
+        private void WindowChromeMouseMove(object? sender, MouseEventArgs e)
         {
-            Panel separator = new()
+            if (sender is not Control control) return;
+            System.Drawing.Point screenPoint = control.PointToScreen(e.Location);
+            if (movingWindow)
             {
-                Width = 1,
-                Height = 24,
-                BackColor = Color.FromArgb(78, 84, 88),
-                Margin = new Padding(4, 6, 10, 0)
-            };
-            toolbar.Controls.Add(separator);
+                int dx = screenPoint.X - windowDragStartScreen.X;
+                int dy = screenPoint.Y - windowDragStartScreen.Y;
+                Location = new System.Drawing.Point(windowDragStartBounds.Left + dx, windowDragStartBounds.Top + dy);
+                return;
+            }
+            if (resizingWindow)
+            {
+                ResizeWindow(screenPoint);
+                return;
+            }
+
+            if (dragging || mode != EditMode.None && control == preview)
+            {
+                return;
+            }
+            WindowResizeHit hit = HitTestResize(PointToClient(screenPoint));
+            Cursor = CursorForResizeHit(hit);
         }
 
-        private void LayoutActionAreaControls(Control host)
+        private void WindowChromeMouseUp(object? sender, MouseEventArgs e)
         {
-            int toolbarWidth = Math.Min(612, Math.Max(420, host.ClientSize.Width - 32));
-            toolbarHost.Width = toolbarWidth;
+            if (e.Button != MouseButtons.Left) return;
+            movingWindow = false;
+            resizingWindow = false;
+            activeResizeHit = WindowResizeHit.None;
+            if (chromeCaptureControl is not null)
+            {
+                chromeCaptureControl.Capture = false;
+                chromeCaptureControl = null;
+            }
+            Cursor = Cursors.Default;
+        }
+
+        private void WindowChromeMouseLeave(object? sender, EventArgs e)
+        {
+            if (!movingWindow && !resizingWindow)
+            {
+                Cursor = Cursors.Default;
+            }
+        }
+
+        private void BeginWindowResize(WindowResizeHit hit, System.Drawing.Point screenPoint, Control control)
+        {
+            resizingWindow = true;
+            activeResizeHit = hit;
+            windowDragStartScreen = screenPoint;
+            windowDragStartBounds = Bounds;
+            chromeCaptureControl = control;
+            control.Capture = true;
+        }
+
+        private void ResizeWindow(System.Drawing.Point screenPoint)
+        {
+            int dx = screenPoint.X - windowDragStartScreen.X;
+            int dy = screenPoint.Y - windowDragStartScreen.Y;
+            Rectangle next = windowDragStartBounds;
+            System.Drawing.Size min = MinimumSize;
+
+            if (activeResizeHit is WindowResizeHit.Left or WindowResizeHit.TopLeft or WindowResizeHit.BottomLeft)
+            {
+                int newLeft = Math.Min(next.Right - min.Width, windowDragStartBounds.Left + dx);
+                next.Width += next.Left - newLeft;
+                next.X = newLeft;
+            }
+            if (activeResizeHit is WindowResizeHit.Right or WindowResizeHit.TopRight or WindowResizeHit.BottomRight)
+            {
+                next.Width = Math.Max(min.Width, windowDragStartBounds.Width + dx);
+            }
+            if (activeResizeHit is WindowResizeHit.Top or WindowResizeHit.TopLeft or WindowResizeHit.TopRight)
+            {
+                int newTop = Math.Min(next.Bottom - min.Height, windowDragStartBounds.Top + dy);
+                next.Height += next.Top - newTop;
+                next.Y = newTop;
+            }
+            if (activeResizeHit is WindowResizeHit.Bottom or WindowResizeHit.BottomLeft or WindowResizeHit.BottomRight)
+            {
+                next.Height = Math.Max(min.Height, windowDragStartBounds.Height + dy);
+            }
+            Bounds = next;
+        }
+
+        private WindowResizeHit HitTestResize(System.Drawing.Point clientPoint)
+        {
+            int grip = Math.Max(8, (int)Math.Round(10 * DeviceDpi / 96.0));
+            bool left = clientPoint.X >= 0 && clientPoint.X < grip;
+            bool right = clientPoint.X < ClientSize.Width && clientPoint.X >= ClientSize.Width - grip;
+            bool top = clientPoint.Y >= 0 && clientPoint.Y < grip;
+            bool bottom = clientPoint.Y < ClientSize.Height && clientPoint.Y >= ClientSize.Height - grip;
+            if (top && left) return WindowResizeHit.TopLeft;
+            if (top && right) return WindowResizeHit.TopRight;
+            if (bottom && left) return WindowResizeHit.BottomLeft;
+            if (bottom && right) return WindowResizeHit.BottomRight;
+            if (left) return WindowResizeHit.Left;
+            if (right) return WindowResizeHit.Right;
+            if (top) return WindowResizeHit.Top;
+            if (bottom) return WindowResizeHit.Bottom;
+            return WindowResizeHit.None;
+        }
+
+        private static Cursor CursorForResizeHit(WindowResizeHit hit)
+        {
+            return hit switch
+            {
+                WindowResizeHit.Left or WindowResizeHit.Right => Cursors.SizeWE,
+                WindowResizeHit.Top or WindowResizeHit.Bottom => Cursors.SizeNS,
+                WindowResizeHit.TopLeft or WindowResizeHit.BottomRight => Cursors.SizeNWSE,
+                WindowResizeHit.TopRight or WindowResizeHit.BottomLeft => Cursors.SizeNESW,
+                _ => Cursors.Default
+            };
+        }
+
+        private void LayoutToolbarOverlay()
+        {
+            toolbar.Width = 820;
+            toolbar.Height = toolbar.PreferredToolbarHeight;
             System.Drawing.Rectangle imageBounds = PreviewImageBounds();
-            int centerX = host.ClientSize.Width / 2;
+            int centerX = content.ClientSize.Width / 2;
             if (imageBounds.Width > 0)
             {
                 System.Drawing.Point imageCenter = preview.PointToScreen(new System.Drawing.Point(imageBounds.Left + imageBounds.Width / 2, imageBounds.Bottom));
-                centerX = host.PointToClient(imageCenter).X;
+                centerX = content.PointToClient(imageCenter).X;
             }
-            toolbarHost.Left = Math.Clamp(centerX - toolbarHost.Width / 2, 16, Math.Max(16, host.ClientSize.Width - toolbarHost.Width - 16));
-            toolbarHost.Top = Math.Max(4, (host.ClientSize.Height - toolbarHost.Height) / 2);
-            toolbarHost.BringToFront();
-
-            statusLabel.Width = Math.Min(520, Math.Max(320, toolbarHost.Width - 92));
-            statusLabel.Height = 30;
-            statusLabel.Left = toolbarHost.Left;
-            statusLabel.Top = Math.Max(0, toolbarHost.Top - statusLabel.Height - 4);
-            statusLabel.BringToFront();
+            int mainBarTop = content.ClientSize.Height - actionArea.Height + (actionArea.Height - 62) / 2;
+            int top = toolbar.OptionsVisible ? mainBarTop - 56 : mainBarTop;
+            toolbar.Left = Math.Clamp(centerX - toolbar.Width / 2, 16, Math.Max(16, content.ClientSize.Width - toolbar.Width - 16));
+            toolbar.Top = Math.Max(8, top);
+            toolbar.BringToFront();
         }
 
         private void SetStatus(string message)
         {
-            statusLabel.Text = message;
-            statusLabel.Visible = !string.IsNullOrWhiteSpace(message);
+            _ = message;
         }
 
         private void UpdateToolButtons()
         {
-            foreach (PillButton button in toolButtons)
-            {
-                button.Selected = button.Tag is EditMode toolMode && toolMode == mode;
-                button.Invalidate();
-            }
+            toolbar.Invalidate();
         }
 
-        private void AddPresetButton(ButtonIcon icon, string hint, AdjustmentPreset preset)
+        private void SetAdjustmentPreset(AdjustmentPreset preset)
         {
-            PillButton button = new()
-            {
-                Text = string.Empty,
-                Tag = preset,
-                Width = 40,
-                Height = 36,
-                Margin = new Padding(0, 0, 8, 0),
-                Font = Font,
-                Icon = icon
-            };
-            button.Click += (_, _) =>
-            {
-                adjustmentPreset = preset;
-                UpdatePresetButtons();
-                RebuildCurrent();
-                SetStatus(string.Format(System.Globalization.CultureInfo.CurrentUICulture,
-                    CaptureText.Get(CaptureString.StatusPreset), PresetText(adjustmentPreset)));
-            };
-            toolTip.SetToolTip(button, hint);
-            presetButtons.Add(button);
-            toolbar.Controls.Add(button);
+            adjustmentPreset = preset;
+            toolbar.Invalidate();
+            RebuildCurrent();
         }
-
-        private void UpdatePresetButtons()
-        {
-            foreach (PillButton button in presetButtons)
-            {
-                button.Selected = button.Tag is AdjustmentPreset preset && preset == adjustmentPreset;
-                button.Invalidate();
-            }
-        }
-
-        private static string PresetText(AdjustmentPreset preset) => preset switch
-        {
-            AdjustmentPreset.Low => CaptureText.Get(CaptureString.PresetLow),
-            AdjustmentPreset.High => CaptureText.Get(CaptureString.PresetHigh),
-            _ => CaptureText.Get(CaptureString.PresetBalanced)
-        };
 
         private void SetMode(EditMode nextMode)
         {
             mode = nextMode;
             UpdateToolButtons();
-            SetStatus(nextMode switch
+        }
+
+        private void SelectToolbarTool(EditMode nextMode, Rectangle anchor)
+        {
+            bool alreadyActive = mode == nextMode;
+            mode = nextMode;
+            toolbar.Invalidate();
+            if (alreadyActive)
             {
-                EditMode.Marker => CaptureText.Get(CaptureString.MarkerModeStatus),
-                EditMode.Mosaic => CaptureText.Get(CaptureString.MosaicModeStatus),
-                _ => CaptureText.Get(CaptureString.ReadyStatus)
-            });
+                ShowToolOptions(nextMode, anchor);
+            }
+        }
+
+        private void ShowToolOptions(EditMode toolMode, Rectangle anchor)
+        {
+            int[] values = toolMode switch
+            {
+                EditMode.Marker or EditMode.Ellipse => new[] { 2, 4, 6 },
+                EditMode.Pen => new[] { 3, 6, 10 },
+                EditMode.Mosaic => new[] { 16, 28, 42 },
+                _ => Array.Empty<int>()
+            };
+            if (values.Length == 0) return;
+
+            List<OptionPopoverItem> options = new();
+            foreach (int value in values)
+            {
+                options.Add(new OptionPopoverItem(
+                    Rectangle.Empty,
+                    value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    null,
+                    IsToolSizeSelected(toolMode, value),
+                    () =>
+                    {
+                        SetToolSize(toolMode, value);
+                        toolbar.Invalidate();
+                    }));
+            }
+            toolbar.ShowOptions(anchor, options);
+        }
+
+        private void ShowColorOptions(Rectangle anchor)
+        {
+            List<OptionPopoverItem> options = new();
+            for (int i = 0; i < AnnotationColors.Length; i++)
+            {
+                int colorIndex = i;
+                options.Add(new OptionPopoverItem(
+                    Rectangle.Empty,
+                    string.Empty,
+                    AnnotationColors[colorIndex],
+                    annotationColorIndex == colorIndex,
+                    () =>
+                    {
+                        annotationColorIndex = colorIndex;
+                        toolbar.Invalidate();
+                    }));
+            }
+            toolbar.ShowOptions(anchor, options);
+        }
+
+        private bool IsToolSizeSelected(EditMode toolMode, int value)
+        {
+            return toolMode switch
+            {
+                EditMode.Marker or EditMode.Ellipse => shapeStrokeWidth == value,
+                EditMode.Pen => penStrokeWidth == value,
+                EditMode.Mosaic => mosaicBrushSize == value,
+                _ => false
+            };
+        }
+
+        private void SetToolSize(EditMode toolMode, int value)
+        {
+            if (toolMode is EditMode.Marker or EditMode.Ellipse) shapeStrokeWidth = value;
+            if (toolMode == EditMode.Pen) penStrokeWidth = value;
+            if (toolMode == EditMode.Mosaic) mosaicBrushSize = value;
+        }
+
+        private void CycleAnnotationColor()
+        {
+            annotationColorIndex = (annotationColorIndex + 1) % AnnotationColors.Length;
+            toolbar.Invalidate();
         }
 
         private void SaveToFile()
@@ -2376,20 +2960,30 @@ internal static class Program
                 return;
             }
 
+            EditOperation operation = operations[^1];
             operations.RemoveAt(operations.Count - 1);
+            redoOperations.Add(operation);
             RebuildCurrent();
-            SetStatus(CaptureText.Get(CaptureString.UndoneStatus));
+        }
+
+        private void RedoLastEdit()
+        {
+            if (redoOperations.Count == 0) return;
+            operations.Add(redoOperations[^1]);
+            redoOperations.RemoveAt(redoOperations.Count - 1);
+            RebuildCurrent();
         }
 
         private void ResetEdits()
         {
             operations.Clear();
+            redoOperations.Clear();
+            currentPenPoints.Clear();
             adjustmentPreset = AdjustmentPreset.Balanced;
-            UpdatePresetButtons();
+            annotationColorIndex = 0;
             mode = EditMode.None;
             UpdateToolButtons();
             RebuildCurrent();
-            SetStatus(CaptureText.Get(CaptureString.ResetStatus));
         }
 
         private void RebuildCurrent()
@@ -2397,14 +2991,26 @@ internal static class Program
             Bitmap next = BuildAdjustedBitmap();
             foreach (EditOperation operation in operations)
             {
-                if (operation.Type == EditOperationType.Mosaic) ApplyMosaic(next, operation.Rect);
+                if (operation.Type == EditOperationType.Mosaic) ApplyMosaic(next, operation.Rect, operation.StrokeWidth);
             }
             using (Graphics graphics = Graphics.FromImage(next))
-            using (Pen pen = new(Color.Red, Math.Max(2, next.Width / 700)))
             {
+                graphics.SmoothingMode = SmoothingMode.AntiAlias;
                 foreach (EditOperation operation in operations)
                 {
+                    if (operation.Type == EditOperationType.Mosaic) continue;
+                    using Pen pen = new(operation.Color, Math.Max(1, operation.StrokeWidth))
+                    {
+                        StartCap = LineCap.Round,
+                        EndCap = LineCap.Round,
+                        LineJoin = LineJoin.Round
+                    };
                     if (operation.Type == EditOperationType.Marker) graphics.DrawRectangle(pen, operation.Rect);
+                    if (operation.Type == EditOperationType.Ellipse) graphics.DrawEllipse(pen, operation.Rect);
+                    if (operation.Type == EditOperationType.Pen && operation.Points is { Count: > 1 })
+                    {
+                        DrawSegmentedLines(graphics, pen, operation.Points);
+                    }
                 }
             }
 
@@ -2478,11 +3084,11 @@ internal static class Program
             return output;
         }
 
-        private static void ApplyMosaic(Bitmap bitmap, System.Drawing.Rectangle rect)
+        private static void ApplyMosaic(Bitmap bitmap, System.Drawing.Rectangle rect, int preferredBlockSize)
         {
             rect.Intersect(new System.Drawing.Rectangle(0, 0, bitmap.Width, bitmap.Height));
             if (rect.Width <= 0 || rect.Height <= 0) return;
-            int block = Math.Max(8, Math.Min(rect.Width, rect.Height) / 12);
+            int block = Math.Max(8, preferredBlockSize);
             using Graphics graphics = Graphics.FromImage(bitmap);
             for (int y = rect.Top; y < rect.Bottom; y += block)
             {
@@ -2499,10 +3105,16 @@ internal static class Program
 
         private void PreviewMouseDown(object? sender, MouseEventArgs e)
         {
+            if (HitTestResize(PointToClient(preview.PointToScreen(e.Location))) != WindowResizeHit.None) return;
             if (mode == EditMode.None || e.Button != MouseButtons.Left) return;
             dragging = true;
             dragStart = e.Location;
             dragCurrent = e.Location;
+            currentPenPoints.Clear();
+            if (mode == EditMode.Pen && PreviewImageBounds().Contains(e.Location))
+            {
+                currentPenPoints.Add(ClientPointToImage(e.Location));
+            }
             preview.Capture = true;
             preview.Invalidate();
         }
@@ -2511,6 +3123,18 @@ internal static class Program
         {
             if (!dragging) return;
             dragCurrent = e.Location;
+            if (mode == EditMode.Pen)
+            {
+                System.Drawing.Rectangle imageBounds = PreviewImageBounds();
+                if (imageBounds.Contains(e.Location))
+                {
+                    currentPenPoints.Add(ClientPointToImage(e.Location));
+                }
+                else if (currentPenPoints.Count > 0 && !IsPathBreak(currentPenPoints[^1]))
+                {
+                    currentPenPoints.Add(new System.Drawing.Point(int.MinValue, int.MinValue));
+                }
+            }
             preview.Invalidate();
         }
 
@@ -2520,15 +3144,32 @@ internal static class Program
             dragging = false;
             preview.Capture = false;
             dragCurrent = e.Location;
-            System.Drawing.Rectangle imageRect = PreviewSelectionToImage();
-            if (imageRect.Width >= 4 && imageRect.Height >= 4)
+            if (mode == EditMode.Pen)
             {
-                operations.Add(new EditOperation(mode == EditMode.Marker ? EditOperationType.Marker : EditOperationType.Mosaic, imageRect, Color.Red));
-                RebuildCurrent();
-                SetStatus(mode == EditMode.Marker
-                    ? CaptureText.Get(CaptureString.AddedMarkerStatus)
-                    : CaptureText.Get(CaptureString.AddedMosaicStatus));
+                TrimPathBreaks(currentPenPoints);
+                if (currentPenPoints.Count(point => !IsPathBreak(point)) > 1)
+                {
+                    operations.Add(new EditOperation(EditOperationType.Pen, System.Drawing.Rectangle.Empty,
+                        AnnotationColors[annotationColorIndex], currentPenPoints.ToList(), string.Empty, penStrokeWidth));
+                    redoOperations.Clear();
+                    RebuildCurrent();
+                }
+                currentPenPoints.Clear();
+                return;
             }
+
+            System.Drawing.Rectangle imageRect = PreviewSelectionToImage();
+            if (imageRect.Width < 4 || imageRect.Height < 4) return;
+            EditOperationType operationType = mode switch
+            {
+                EditMode.Ellipse => EditOperationType.Ellipse,
+                EditMode.Mosaic => EditOperationType.Mosaic,
+                _ => EditOperationType.Marker
+            };
+            int strokeWidth = mode == EditMode.Mosaic ? mosaicBrushSize : shapeStrokeWidth;
+            operations.Add(new EditOperation(operationType, imageRect, AnnotationColors[annotationColorIndex], null, string.Empty, strokeWidth));
+            redoOperations.Clear();
+            RebuildCurrent();
         }
 
         private void PreviewPaint(object? sender, PaintEventArgs e)
@@ -2536,8 +3177,22 @@ internal static class Program
             if (!dragging) return;
             System.Drawing.Rectangle rect = CurrentPreviewSelection();
             if (rect.Width <= 0 || rect.Height <= 0) return;
-            using Pen pen = new(Color.White, 2.0f);
-            e.Graphics.DrawRectangle(pen, rect);
+            float previewStrokeWidth = mode == EditMode.Pen ? penStrokeWidth : shapeStrokeWidth;
+            using Pen pen = new(AnnotationColors[annotationColorIndex], previewStrokeWidth)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round,
+                LineJoin = LineJoin.Round
+            };
+            if (mode == EditMode.Ellipse) e.Graphics.DrawEllipse(pen, rect);
+            else if (mode == EditMode.Pen)
+            {
+                List<System.Drawing.Point> points = currentPenPoints
+                    .Select(point => IsPathBreak(point) ? point : ImagePointToPreview(point))
+                    .ToList();
+                DrawSegmentedLines(e.Graphics, pen, points);
+            }
+            else e.Graphics.DrawRectangle(pen, rect);
         }
 
         private System.Drawing.Rectangle CurrentPreviewSelection()
@@ -2562,6 +3217,26 @@ internal static class Program
             int right = Math.Clamp((int)Math.Round((selection.Right - imageBounds.X) * scaleX), x + 1, current.Width);
             int bottom = Math.Clamp((int)Math.Round((selection.Bottom - imageBounds.Y) * scaleY), y + 1, current.Height);
             return System.Drawing.Rectangle.FromLTRB(x, y, right, bottom);
+        }
+
+        private System.Drawing.Point ClientPointToImage(System.Drawing.Point point)
+        {
+            System.Drawing.Rectangle imageBounds = PreviewImageBounds();
+            double scaleX = current.Width / (double)Math.Max(1, imageBounds.Width);
+            double scaleY = current.Height / (double)Math.Max(1, imageBounds.Height);
+            int x = Math.Clamp((int)Math.Round((point.X - imageBounds.X) * scaleX), 0, current.Width - 1);
+            int y = Math.Clamp((int)Math.Round((point.Y - imageBounds.Y) * scaleY), 0, current.Height - 1);
+            return new System.Drawing.Point(x, y);
+        }
+
+        private System.Drawing.Point ImagePointToPreview(System.Drawing.Point point)
+        {
+            System.Drawing.Rectangle imageBounds = PreviewImageBounds();
+            double scaleX = imageBounds.Width / (double)Math.Max(1, current.Width);
+            double scaleY = imageBounds.Height / (double)Math.Max(1, current.Height);
+            return new System.Drawing.Point(
+                imageBounds.X + (int)Math.Round(point.X * scaleX),
+                imageBounds.Y + (int)Math.Round(point.Y * scaleY));
         }
 
         private System.Drawing.Rectangle PreviewImageBounds()
@@ -3940,6 +4615,27 @@ internal static class Program
         _ => $"FORMAT_{format}"
     };
 
+    private static void ApplyDarkWindowFrame(nint hwnd)
+    {
+        if (hwnd == 0) return;
+
+        int enabled = 1;
+        _ = DwmSetWindowAttribute(hwnd, DwmwaUseImmersiveDarkMode, ref enabled, sizeof(int));
+        _ = DwmSetWindowAttribute(hwnd, DwmwaUseImmersiveDarkModeLegacy, ref enabled, sizeof(int));
+
+        int captionColor = ColorRef(Color.FromArgb(15, 17, 18));
+        int borderColor = ColorRef(Color.FromArgb(55, 60, 64));
+        int textColor = ColorRef(Color.FromArgb(235, 239, 242));
+        _ = DwmSetWindowAttribute(hwnd, DwmwaCaptionColor, ref captionColor, sizeof(int));
+        _ = DwmSetWindowAttribute(hwnd, DwmwaBorderColor, ref borderColor, sizeof(int));
+        _ = DwmSetWindowAttribute(hwnd, DwmwaTextColor, ref textColor, sizeof(int));
+    }
+
+    private static int ColorRef(Color color)
+    {
+        return color.R | (color.G << 8) | (color.B << 16);
+    }
+
     [DllImport("d3d11.dll")]
     private static extern int D3D11CreateDevice(
         nint adapter,
@@ -3976,6 +4672,9 @@ internal static class Program
 
     [DllImport("user32.dll")]
     private static extern bool SetWindowDisplayAffinity(nint hwnd, uint affinity);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(nint hwnd, int attribute, ref int attributeValue, int attributeSize);
 
     [DllImport("user32.dll")]
     private static extern uint GetDisplayConfigBufferSizes(uint flags, out uint numPathArrayElements, out uint numModeInfoArrayElements);

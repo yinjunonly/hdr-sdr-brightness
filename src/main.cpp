@@ -4,6 +4,7 @@
 
 #include <windows.h>
 #include <windowsx.h>
+#include <propidl.h>
 #include <gdiplus.h>
 #include <objbase.h>
 #include <shellapi.h>
@@ -159,7 +160,8 @@ enum NotificationAction {
     NotificationActionDefault = 0,
     NotificationActionSupportReminder = 1,
     NotificationActionHdrCalibration = 2,
-    NotificationActionHdrScreenshot = 3
+    NotificationActionHdrScreenshot = 3,
+    NotificationActionFullscreenScreenshot = 4
 };
 
 const UINT32 kQdcOnlyActivePaths = 0x00000002;
@@ -393,6 +395,7 @@ std::wstring g_status = L"Starting";
 std::wstring g_lastNotificationTitle;
 std::wstring g_lastNotificationBody;
 NotificationAction g_lastNotificationAction = NotificationActionDefault;
+std::wstring g_lastFullscreenCapturePath;
 int g_lastAppliedBrightness = -1;
 bool g_lastDecisionNight = false;
 int g_lastHdrTargetCount = 0;
@@ -692,6 +695,29 @@ std::wstring GetCaptureHelperPath() {
     return JoinPath(JoinPath(DirectoryFromPath(GetExePath()), L"capture"), L"HdrSdrCapture.exe");
 }
 
+std::wstring GetFullscreenNotificationCapturePath() {
+    std::vector<wchar_t> temp(MAX_PATH);
+    DWORD length = GetTempPathW(static_cast<DWORD>(temp.size()), temp.data());
+    std::wstring baseDirectory = (length > 0 && length < temp.size()) ? std::wstring(temp.data(), length) : L".";
+    std::wstring directory = JoinPath(baseDirectory, L"HdrSdrBrightness");
+    CreateDirectoryW(directory.c_str(), NULL);
+
+    SYSTEMTIME now = {};
+    GetLocalTime(&now);
+    std::wstringstream name;
+    name << L"fullscreen-"
+         << now.wYear
+         << (now.wMonth < 10 ? L"0" : L"") << now.wMonth
+         << (now.wDay < 10 ? L"0" : L"") << now.wDay
+         << L"-"
+         << (now.wHour < 10 ? L"0" : L"") << now.wHour
+         << (now.wMinute < 10 ? L"0" : L"") << now.wMinute
+         << (now.wSecond < 10 ? L"0" : L"") << now.wSecond
+         << L"-" << now.wMilliseconds
+         << L".bmp";
+    return JoinPath(directory, name.str());
+}
+
 bool LaunchDetached(const std::wstring& commandLine, const std::wstring& workingDirectory) {
     STARTUPINFOW si = {};
     PROCESS_INFORMATION pi = {};
@@ -723,6 +749,24 @@ void LaunchHdrScreenshotHelper(HWND owner) {
         return;
     }
 
+}
+
+void LaunchHdrFullscreenEditor(HWND owner) {
+    (void)owner;
+    std::wstring helperPath = GetCaptureHelperPath();
+    if (!FileExists(helperPath) || g_lastFullscreenCapturePath.empty() ||
+        !FileExists(g_lastFullscreenCapturePath)) {
+        ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtCaptureLaunchFailed), NotificationActionDefault);
+        return;
+    }
+
+    std::wstring command = QuotePath(helperPath) +
+        L" --edit-file " + QuoteCommandLineArgument(g_lastFullscreenCapturePath) +
+        L" --skip-initial-copy" +
+        L" --lang " + IntText(CurrentUiLanguage());
+    if (!LaunchDetached(command, DirectoryFromPath(helperPath))) {
+        ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtCaptureLaunchFailed), NotificationActionDefault);
+    }
 }
 
 bool RunHiddenCommand(const std::wstring& commandLine, DWORD timeoutMs);
@@ -770,7 +814,10 @@ void LaunchHdrFullscreenCapture(HWND owner) {
         ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtCaptureHelperMissing), NotificationActionDefault);
         return;
     }
-    std::wstring command = QuotePath(helperPath) + L" --fullscreen-clip --lang " + IntText(CurrentUiLanguage());
+    g_lastFullscreenCapturePath = GetFullscreenNotificationCapturePath();
+    std::wstring command = QuotePath(helperPath) +
+        L" --fullscreen-clip --output " + QuoteCommandLineArgument(g_lastFullscreenCapturePath) +
+        L" --lang " + IntText(CurrentUiLanguage());
     auto* args = new FullscreenCaptureArgs{command, g_mainWindow};
     HANDLE hThread = CreateThread(NULL, 0, FullscreenCaptureThread, args, 0, NULL);
     if (hThread) {
@@ -2174,6 +2221,10 @@ void ShowLastNotificationDialog() {
     }
     if (g_lastNotificationAction == NotificationActionHdrScreenshot) {
         LaunchHdrScreenshotHelper(g_mainWindow);
+        return;
+    }
+    if (g_lastNotificationAction == NotificationActionFullscreenScreenshot) {
+        LaunchHdrFullscreenEditor(g_mainWindow);
         return;
     }
     ShowNotificationDialogWindow();
@@ -7347,8 +7398,9 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
     case kFullscreenDoneMessage:
         if (wParam) {
             ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtHotkeyCopied),
-                                 NotificationActionHdrScreenshot);
+                                 NotificationActionFullscreenScreenshot);
         } else {
+            g_lastFullscreenCapturePath.clear();
             ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtCaptureLaunchFailed),
                                  NotificationActionDefault);
         }

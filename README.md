@@ -8,7 +8,7 @@
 
 It is built for OLED, QD-OLED, MiniLED, HDR monitors, HDR TVs, and HDR laptop panels where regular SDR apps may look too bright, too dim, or washed out after HDR is turned on.
 
-![HDR SDR Brightness settings with compact screenshot hotkey controls](image/README/settings-1.0.9.png)
+![Clean, efficient, and intuitive light and dark interfaces](image/README/theme-adaptive-1.0.9.png)
 
 <p>
   <a href="https://apps.microsoft.com/detail/9nksvcpjl35j">
@@ -30,10 +30,12 @@ Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no inst
 
 ### What's New In 1.0.9
 
-- Adds HDR screenshot capture powered by Windows Graphics Capture, with region selection and fullscreen hotkeys.
+- Adds HDR screenshot capture powered by Windows Graphics Capture, aimed at avoiding the blown-out or overexposed results common with regular screenshot tools on HDR displays.
 - Copies selected screenshots to the clipboard by default, with quick save and lightweight annotation controls.
-- Adds a compact screenshot hotkey settings dialog for region and fullscreen capture shortcuts.
+- Adds a compact screenshot hotkey settings dialog for region and fullscreen capture shortcuts. Defaults are `Alt+S` for region capture and `Shift+Alt+S` for fullscreen capture.
 - Refines the settings layout, card padding, HDR/SDR preview alignment, and popup layering.
+
+![HDR screenshot capture workflow](image/README/hdr-screenshot-1.0.9.png)
 
 ### Common Use Cases
 
@@ -48,7 +50,7 @@ Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no inst
 - Can follow **Windows Night Light**, or use a built-in fallback schedule.
 - Restores the configured SDR brightness if a manual change is detected.
 - Provides a live SDR/HDR preview in the settings window.
-- Captures HDR screenshots with region selection, fullscreen capture, clipboard copy, save, and simple annotations.
+- Captures HDR screenshots that are less prone to the overexposed or washed-out look produced by many regular screenshot tools, with region selection, fullscreen capture, clipboard copy, save, and simple annotations.
 - Links to Microsoft's Windows HDR Calibration app for display-level HDR calibration.
 - Runs quietly from the system tray and can start with Windows.
 - Follows the Windows light/dark app theme automatically.
@@ -71,6 +73,8 @@ Small interactions are kept responsive and restrained: buttons and controls reac
 | Switching mode | Follow Windows Night Light when available |
 | Fallback schedule | Night starts at `18:00`, day starts at `08:00` |
 | Restore manual changes | On |
+| Region screenshot hotkey | `Alt+S` |
+| Fullscreen screenshot hotkey | `Shift+Alt+S` |
 
 These values are only starting points. Tune them for your panel, room lighting, and preferred SDR white level.
 
@@ -190,7 +194,7 @@ SDR white level
 
 它适合 OLED、QD-OLED、MiniLED、HDR 显示器、HDR 电视和支持 HDR 的笔记本屏幕。开启 HDR 后，如果普通 SDR 软件看起来过亮、过暗或发灰，可以用它自动切换和修正 SDR 内容亮度。
 
-![简洁、高效、直观的浅色与深色界面](image/README/theme-adaptive-1.0.6-zh.png)
+![简洁、高效、直观的浅色与深色界面](image/README/theme-adaptive-1.0.9-zh.png)
 
 <p>
   <a href="https://apps.microsoft.com/detail/9nksvcpjl35j">
@@ -212,10 +216,12 @@ HdrSdrBrightness-1.0.9-win64.zip
 
 ### 1.0.9 更新内容
 
-- 新增基于 Windows Graphics Capture 的 HDR 截图，支持区域截图和全屏截图快捷键。
+- 新增基于 Windows Graphics Capture 的 HDR 截图，用来缓解普通截图工具在 HDR 显示器上容易截出过曝、发白、丢高光的问题。
 - 区域截图默认复制到剪贴板，并提供快速保存、轻量标注和马赛克工具。
-- 新增紧凑的截图快捷键设置弹窗，可单独修改区域截图和全屏截图快捷键。
+- 新增紧凑的截图快捷键设置弹窗，可单独修改区域截图和全屏截图快捷键；默认区域截图为 `Alt+S`，默认全屏截图为 `Shift+Alt+S`。
 - 继续优化设置页布局、卡片内边距、HDR/SDR 预览对齐和弹层遮挡问题。
+
+![HDR 截图捕获流程](image/README/hdr-screenshot-1.0.9-zh.png)
 
 ### 常见使用场景
 
@@ -230,7 +236,7 @@ HdrSdrBrightness-1.0.9-win64.zip
 - 可以跟随 **Windows 夜间模式**，也可以使用内置默认时段。
 - 检测到手动修改 SDR 内容亮度后，可以自动恢复到配置值。
 - 设置页提供 SDR/HDR 实时预览。
-- 支持 HDR 截图：区域选择、全屏捕获、剪贴板复制、保存和简单标注。
+- 支持 HDR 截图：相比很多普通截图工具，更不容易把 HDR 画面截得过曝或发白，并提供区域选择、全屏捕获、剪贴板复制、保存和简单标注。
 - 提供微软 Windows HDR Calibration 入口，用于显示器级 HDR 校准。
 - 常驻系统托盘，并支持开机后安静启动。
 - 自动跟随 Windows 应用浅色/深色主题。
@@ -253,6 +259,8 @@ HDR SDR 亮度助手的设计目标是日常使用足够简单：打开后设置
 | 切换方式 | 优先跟随 Windows 夜间模式 |
 | 默认时段 | `18:00` 进入夜间，`08:00` 进入白天 |
 | 自动纠正手动调整 | 开启 |
+| 区域截图快捷键 | `Alt+S` |
+| 全屏截图快捷键 | `Shift+Alt+S` |
 
 这些只是起点。你可以根据屏幕类型、房间光线和自己习惯的 SDR 白点继续调整。
 
