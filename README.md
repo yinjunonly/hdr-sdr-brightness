@@ -8,7 +8,7 @@
 
 It is built for OLED, QD-OLED, MiniLED, HDR monitors, HDR TVs, and HDR laptop panels where regular SDR apps may look too bright, too dim, or washed out after HDR is turned on.
 
-![Clean, efficient, and intuitive light and dark interfaces](image/README/theme-adaptive-1.0.9.png)
+![Clean, efficient, and intuitive light and dark interfaces](image/README/theme-adaptive-1.0.10.png)
 
 <p>
   <a href="https://apps.microsoft.com/detail/9nksvcpjl35j">
@@ -23,19 +23,19 @@ Install from the [Microsoft Store](https://apps.microsoft.com/detail/9nksvcpjl35
 Use the Windows x64 package:
 
 ```text
-HdrSdrBrightness-1.0.9-win64.zip
+HdrSdrBrightness-1.0.10-win64.zip
 ```
 
 Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no installer, no service, and no administrator privileges are required.
 
-### What's New In 1.0.9
+### What's New In 1.0.10
 
-- Adds HDR screenshot capture powered by Windows Graphics Capture, aimed at avoiding the blown-out or overexposed results common with regular screenshot tools on HDR displays.
-- Copies selected screenshots to the clipboard by default, with quick save and lightweight annotation controls.
-- Adds a compact screenshot hotkey settings dialog for region and fullscreen capture shortcuts. Defaults are `Alt+S` for region capture and `Shift+Alt+S` for fullscreen capture.
-- Refines the settings layout, card padding, HDR/SDR preview alignment, and popup layering.
+- Makes HDR screenshot capture smoother: region selection is single-instance, stays on top reliably, responds to `Esc` immediately, and drags more fluidly.
+- Keeps the tray app lightweight at idle by starting the screenshot helper only when capture is used, then letting it exit after a short idle period.
+- Fixes custom screenshot hotkeys so saved shortcuts echo correctly and keep working after Apply, OK, and restart.
+- Prevents Store trial-expired background startup from continuing to auto-launch after the license is no longer active.
 
-![HDR screenshot capture workflow](image/README/hdr-screenshot-1.0.9.png)
+![HDR screenshot capture workflow](image/README/hdr-screenshot-1.0.10.png)
 
 ### Common Use Cases
 
@@ -114,7 +114,7 @@ Supporter codes only show a small local badge. They are optional and do not unlo
 
 ![Background idle performance profile](image/README/performance-1.0.6.png)
 
-Measured with the settings window closed and the app running in `--background` tray mode:
+Measured with the settings window closed and the app running in `--background` tray mode, before invoking screenshot capture:
 
 | Metric | Result |
 | --- | ---: |
@@ -129,6 +129,8 @@ Measured with the settings window closed and the app running in `--background` t
 | Average threads | 5 |
 
 Sampling method: 1 second process samples after a 5 second warm-up. CPU is calculated from `TotalProcessorTime` deltas and normalized across 12 logical processors. Actual values can vary by display count, HDR state, Windows build, GPU driver, and hardware.
+
+HDR screenshot capture is on demand. The tray app starts `HdrSdrCapture.exe` only when you use region or fullscreen capture, keeps it warm briefly for repeated screenshots, and lets it exit after about 90 seconds of no capture activity. While the helper is active, memory can temporarily rise because it uses .NET, WinForms, Windows Graphics Capture, and image buffers for tone mapping and editing; that cost is released after the helper exits.
 
 The background path is designed to stay quiet:
 
@@ -194,7 +196,7 @@ SDR white level
 
 它适合 OLED、QD-OLED、MiniLED、HDR 显示器、HDR 电视和支持 HDR 的笔记本屏幕。开启 HDR 后，如果普通 SDR 软件看起来过亮、过暗或发灰，可以用它自动切换和修正 SDR 内容亮度。
 
-![简洁、高效、直观的浅色与深色界面](image/README/theme-adaptive-1.0.9-zh.png)
+![简洁、高效、直观的浅色与深色界面](image/README/theme-adaptive-1.0.10-zh.png)
 
 <p>
   <a href="https://apps.microsoft.com/detail/9nksvcpjl35j">
@@ -209,19 +211,19 @@ SDR white level
 Windows x64 用户下载：
 
 ```text
-HdrSdrBrightness-1.0.9-win64.zip
+HdrSdrBrightness-1.0.10-win64.zip
 ```
 
 解压后运行 `HdrSdrBrightness.exe`。这是便携程序：不需要安装，不创建服务，也不需要管理员权限。
 
-### 1.0.9 更新内容
+### 1.0.10 更新内容
 
-- 新增基于 Windows Graphics Capture 的 HDR 截图，用来缓解普通截图工具在 HDR 显示器上容易截出过曝、发白、丢高光的问题。
-- 区域截图默认复制到剪贴板，并提供快速保存、轻量标注和马赛克工具。
-- 新增紧凑的截图快捷键设置弹窗，可单独修改区域截图和全屏截图快捷键；默认区域截图为 `Alt+S`，默认全屏截图为 `Shift+Alt+S`。
-- 继续优化设置页布局、卡片内边距、HDR/SDR 预览对齐和弹层遮挡问题。
+- 继续优化 HDR 截图体验：区域截图遮罩保持单例、可靠置顶，`Esc` 可立即取消，鼠标框选更顺滑。
+- 截图 helper 改为按需启动，短时间内连续截图会保温复用，空闲约 90 秒后自动退出，避免常驻占用后台内存。
+- 修复自定义截图快捷键保存后回显不正确、应用或重启后可能回到旧值的问题。
+- 修复 Microsoft Store 试用结束后后台自启仍会尝试拉起程序的问题。
 
-![HDR 截图捕获流程](image/README/hdr-screenshot-1.0.9-zh.png)
+![HDR 截图捕获流程](image/README/hdr-screenshot-1.0.10-zh.png)
 
 ### 常见使用场景
 
@@ -300,7 +302,7 @@ https://afdian.com/a/injunaid/plan
 
 ![后台空闲性能](image/README/performance-1.0.6.png)
 
-以下数据来自设置窗口关闭、程序以 `--background` 托盘模式运行时的采样：
+以下数据来自设置窗口关闭、程序以 `--background` 托盘模式运行，且尚未调用截图功能时的采样：
 
 | 指标 | 结果 |
 | --- | ---: |
@@ -315,6 +317,8 @@ https://afdian.com/a/injunaid/plan
 | 平均线程数 | 5 |
 
 采样方式：预热 5 秒后，每 1 秒读取一次进程数据。CPU 使用进程 `TotalProcessorTime` 增量计算，并按 12 个逻辑处理器归一化。实际占用会随显示器数量、HDR 状态、Windows 版本、显卡驱动和硬件环境变化。
+
+HDR 截图是按需启动的。托盘主程序只有在使用区域截图或全屏截图时才会启动 `HdrSdrCapture.exe`，短时间连续截图会复用它，约 90 秒没有截图操作后自动退出。helper 活跃期间会因为 .NET、WinForms、Windows Graphics Capture、图像缓冲、色调映射和编辑预览临时占用更多内存；退出后这部分占用会释放，不属于常驻后台成本。
 
 后台路径尽量保持安静：
 

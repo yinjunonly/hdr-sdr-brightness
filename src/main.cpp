@@ -38,6 +38,7 @@ const wchar_t kConfigKey[] = L"Software\\OledHdrSdrSync";
 const wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const wchar_t kStartupTaskName[] = L"HdrSdrBrightness";
 const wchar_t kStoreStartupTaskId[] = L"HdrSdrBrightnessStartup";
+const wchar_t kCapturePipeName[] = L"\\\\.\\pipe\\HdrSdrBrightnessCapture";
 const int IDI_APPICON = 101;
 
 const UINT kTrayMessage = WM_APP + 1;
@@ -695,6 +696,8 @@ std::wstring GetCaptureHelperPath() {
     return JoinPath(JoinPath(DirectoryFromPath(GetExePath()), L"capture"), L"HdrSdrCapture.exe");
 }
 
+bool g_captureServerStartAttempted = false;
+
 std::wstring GetFullscreenNotificationCapturePath() {
     std::vector<wchar_t> temp(MAX_PATH);
     DWORD length = GetTempPathW(static_cast<DWORD>(temp.size()), temp.data());
@@ -735,11 +738,64 @@ bool LaunchDetached(const std::wstring& commandLine, const std::wstring& working
     return true;
 }
 
+bool SendCaptureServerCommand(const std::wstring& command, DWORD timeoutMs) {
+    std::wstring payload = command + L"\n";
+    DWORD startTick = GetTickCount();
+    for (;;) {
+        HANDLE pipe = CreateFileW(kCapturePipeName, GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
+                                  FILE_ATTRIBUTE_NORMAL, NULL);
+        if (pipe != INVALID_HANDLE_VALUE) {
+            DWORD bytesWritten = 0;
+            DWORD bytesToWrite = static_cast<DWORD>(payload.size() * sizeof(wchar_t));
+            BOOL ok = WriteFile(pipe, payload.data(), bytesToWrite, &bytesWritten, NULL);
+            CloseHandle(pipe);
+            return ok && bytesWritten == bytesToWrite;
+        }
+
+        DWORD error = GetLastError();
+        DWORD elapsed = GetTickCount() - startTick;
+        if (elapsed >= timeoutMs) return false;
+
+        DWORD remaining = timeoutMs - elapsed;
+        if (error == ERROR_PIPE_BUSY) {
+            WaitNamedPipeW(kCapturePipeName, std::min<DWORD>(remaining, 100));
+        } else {
+            Sleep(std::min<DWORD>(remaining, 50));
+        }
+    }
+}
+
+void StartCaptureHelperServer() {
+    if (g_captureServerStartAttempted) return;
+    g_captureServerStartAttempted = true;
+
+    std::wstring helperPath = GetCaptureHelperPath();
+    if (!FileExists(helperPath)) return;
+
+    std::wstringstream command;
+    command << QuotePath(helperPath)
+            << L" --server --parent-pid " << GetCurrentProcessId()
+            << L" --idle-timeout-ms 90000"
+            << L" --lang " << CurrentUiLanguage();
+    LaunchDetached(command.str(), DirectoryFromPath(helperPath));
+}
+
 void LaunchHdrScreenshotHelper(HWND owner) {
     (void)owner;
     std::wstring helperPath = GetCaptureHelperPath();
     if (!FileExists(helperPath)) {
         ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtCaptureHelperMissing), NotificationActionDefault);
+        return;
+    }
+
+    std::wstring pipeCommand = L"select-region\t" + IntText(CurrentUiLanguage());
+    if (SendCaptureServerCommand(pipeCommand, 80)) {
+        return;
+    }
+
+    g_captureServerStartAttempted = false;
+    StartCaptureHelperServer();
+    if (SendCaptureServerCommand(pipeCommand, 5000)) {
         return;
     }
 
@@ -770,6 +826,9 @@ void LaunchHdrFullscreenEditor(HWND owner) {
 }
 
 bool RunHiddenCommand(const std::wstring& commandLine, DWORD timeoutMs);
+bool RunHiddenCommandExitCode(const std::wstring& commandLine, DWORD timeoutMs, DWORD* exitCode);
+void WriteDwordValue(HKEY root, const wchar_t* keyPath, const wchar_t* valueName, DWORD value);
+bool SetStoreStartupEnabled(bool enabled);
 
 void UnregisterAppHotkeys() {
     if (!g_mainWindow) return;
@@ -790,6 +849,28 @@ void RegisterAppHotkeys() {
                        g_config.fullscreenHotkeyMod | MOD_NOREPEAT,
                        g_config.fullscreenHotkeyVk);
     }
+}
+
+bool IsStoreLicenseExplicitlyInactive() {
+    if (!IsStoreBuild()) return false;
+
+    std::wstring helperPath = GetCaptureHelperPath();
+    if (!FileExists(helperPath)) return false;
+
+    DWORD exitCode = 1;
+    std::wstring command = QuotePath(helperPath) + L" --check-store-license";
+    if (!RunHiddenCommandExitCode(command, 6000, &exitCode)) {
+        return false;
+    }
+
+    return exitCode == 2;
+}
+
+void DisableStoreStartupAfterLicenseExpired() {
+    if (!UseStoreStartupIntegration()) return;
+    SetStoreStartupEnabled(false);
+    g_config.startWithWindows = false;
+    WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"StartWithWindows", 0);
 }
 
 // 全屏截图后台线程参数包
@@ -829,6 +910,11 @@ void LaunchHdrFullscreenCapture(HWND owner) {
 }
 
 bool RunHiddenCommand(const std::wstring& commandLine, DWORD timeoutMs) {
+    DWORD exitCode = 1;
+    return RunHiddenCommandExitCode(commandLine, timeoutMs, &exitCode) && exitCode == 0;
+}
+
+bool RunHiddenCommandExitCode(const std::wstring& commandLine, DWORD timeoutMs, DWORD* exitCode) {
     STARTUPINFOW si = {};
     PROCESS_INFORMATION pi = {};
     si.cb = sizeof(si);
@@ -843,16 +929,17 @@ bool RunHiddenCommand(const std::wstring& commandLine, DWORD timeoutMs) {
     if (!created) return false;
 
     DWORD wait = WaitForSingleObject(pi.hProcess, timeoutMs);
-    DWORD exitCode = 1;
+    DWORD processExitCode = 1;
     if (wait == WAIT_OBJECT_0) {
-        GetExitCodeProcess(pi.hProcess, &exitCode);
+        GetExitCodeProcess(pi.hProcess, &processExitCode);
     } else {
         TerminateProcess(pi.hProcess, 1);
     }
 
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-    return wait == WAIT_OBJECT_0 && exitCode == 0;
+    if (exitCode) *exitCode = processExitCode;
+    return wait == WAIT_OBJECT_0;
 }
 
 bool IsBackgroundLaunchArgument(const wchar_t* arg) {
@@ -863,10 +950,10 @@ bool IsBackgroundLaunchArgument(const wchar_t* arg) {
            lstrcmpiW(arg, L"/tray") == 0;
 }
 
-bool ShouldOpenSettingsOnLaunch() {
+bool HasBackgroundLaunchArgument() {
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (!argv) return true;
+    if (!argv) return false;
 
     bool background = false;
     for (int i = 1; i < argc; ++i) {
@@ -877,7 +964,11 @@ bool ShouldOpenSettingsOnLaunch() {
     }
 
     LocalFree(argv);
-    return !background;
+    return background;
+}
+
+bool ShouldOpenSettingsOnLaunch() {
+    return !HasBackgroundLaunchArgument();
 }
 
 void ShowSettingsInExistingInstance() {
@@ -5620,9 +5711,9 @@ void DrawHotkeyDialog(HDC dc, HWND hwnd) {
     bool recordingScreenshot = g_recordingHotkey == HoverScreenshotHotkey;
     bool recordingFullscreen = g_recordingHotkey == HoverFullscreenHotkey;
     std::wstring screenshotText = recordingScreenshot ? T(TxtHotkeyRecording)
-        : HotkeyText(g_config.screenshotHotkeyMod, g_config.screenshotHotkeyVk);
+        : HotkeyText(g_settingsDraft.screenshotHotkeyMod, g_settingsDraft.screenshotHotkeyVk);
     std::wstring fullscreenText = recordingFullscreen ? T(TxtHotkeyRecording)
-        : HotkeyText(g_config.fullscreenHotkeyMod, g_config.fullscreenHotkeyVk);
+        : HotkeyText(g_settingsDraft.fullscreenHotkeyMod, g_settingsDraft.fullscreenHotkeyVk);
     DrawHotkeyPill(dc, FromUi(HotkeyDialogScreenshotBox(hwnd).left), FromUi(HotkeyDialogScreenshotBox(hwnd).top), 150,
                    screenshotText, recordingScreenshot, IsHover(HoverScreenshotHotkey));
     DrawHotkeyPill(dc, FromUi(HotkeyDialogFullscreenBox(hwnd).left), FromUi(HotkeyDialogFullscreenBox(hwnd).top), 150,
@@ -6550,6 +6641,7 @@ void ApplySettingsDraft(HWND hwnd, bool closeWindow) {
     g_config = g_settingsDraft;
     g_config.supporterCode = supporterCode;
     SaveConfig();
+    RegisterAppHotkeys();
     PostMessageW(g_mainWindow, kApplyMessage, TRUE, 0);
     if (closeWindow) {
         DestroyWindow(hwnd);
@@ -6665,6 +6757,27 @@ void StartHotkeyRecording(HWND hwnd, int control) {
     UnregisterAppHotkeys();
     ArmSettingsAnimationTimer(hwnd);
     InvalidateRect(hwnd, NULL, FALSE);
+}
+
+void ApplyRecordedHotkey(int target, UINT mod, UINT vk) {
+    if (target == HoverScreenshotHotkey) {
+        g_config.screenshotHotkeyMod = mod;
+        g_config.screenshotHotkeyVk = vk;
+        if (g_settingsDraftActive) {
+            g_settingsDraft.screenshotHotkeyMod = mod;
+            g_settingsDraft.screenshotHotkeyVk = vk;
+        }
+        return;
+    }
+
+    if (target == HoverFullscreenHotkey) {
+        g_config.fullscreenHotkeyMod = mod;
+        g_config.fullscreenHotkeyVk = vk;
+        if (g_settingsDraftActive) {
+            g_settingsDraft.fullscreenHotkeyMod = mod;
+            g_settingsDraft.fullscreenHotkeyVk = vk;
+        }
+    }
 }
 
 void OpenNightLightSettings(HWND hwnd) {
@@ -7051,13 +7164,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
                 if (GetKeyState(VK_MENU) & 0x8000) mod |= MOD_ALT;
                 if ((GetKeyState(VK_LWIN) | GetKeyState(VK_RWIN)) & 0x8000) mod |= MOD_WIN;
                 if (mod != 0) {
-                    if (g_recordingHotkey == HoverScreenshotHotkey) {
-                        g_config.screenshotHotkeyMod = mod;
-                        g_config.screenshotHotkeyVk = vk;
-                    } else {
-                        g_config.fullscreenHotkeyMod = mod;
-                        g_config.fullscreenHotkeyVk = vk;
-                    }
+                    ApplyRecordedHotkey(g_recordingHotkey, mod, vk);
                     g_recordingHotkey = 0;
                     SaveConfig();
                     RegisterAppHotkeys();
@@ -7489,7 +7596,14 @@ bool CreateMainWindow() {
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int) {
     g_instance = instance;
     bool openSettingsOnLaunch = ShouldOpenSettingsOnLaunch();
+    bool backgroundLaunch = !openSettingsOnLaunch;
     g_taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
+
+    LoadConfig(false);
+    if (backgroundLaunch && IsStoreLicenseExplicitlyInactive()) {
+        DisableStoreStartupAfterLicenseExpired();
+        return 0;
+    }
 
     HANDLE mutex = CreateMutexW(NULL, TRUE, L"Local\\OledHdrSdrSyncMutex");
     if (!mutex) {
@@ -7503,7 +7617,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int) {
         return 0;
     }
 
-    LoadConfig(false);
     if (!CreateMainWindow()) {
         CloseHandle(mutex);
         return 1;

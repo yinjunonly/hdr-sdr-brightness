@@ -2,19 +2,24 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.IO.Pipes;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Forms;
 using Windows.Foundation;
 using Windows.Graphics.Capture;
 using Windows.Graphics.DirectX;
 using Windows.Graphics.DirectX.Direct3D11;
 using Windows.Graphics.Imaging;
+using Windows.Services.Store;
 using Windows.Storage;
 using WinRT;
 using WinRT.Interop;
 
 internal static class Program
 {
+    private const string PipeName = "HdrSdrBrightnessCapture";
+    private static int activeRegionCapture;
     private const uint D3d11CreateDeviceBgraSupport = 0x20;
     private const uint D3d11SdkVersion = 7;
     private const uint D3dDriverTypeHardware = 1;
@@ -31,6 +36,16 @@ internal static class Program
     private const int DwmwaBorderColor = 34;
     private const int DwmwaCaptionColor = 35;
     private const int DwmwaTextColor = 36;
+    private static readonly nint HwndTopmost = new(-1);
+    private static readonly nint HwndNoTopmost = new(-2);
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpShowWindow = 0x0040;
+    private const uint SwpHideWindow = 0x0080;
+    private const uint SwpNoActivate = 0x0010;
+    private const int SwHide = 0;
+    private const int WmHotkey = 0x0312;
+    private const int VkEscape = 0x1B;
 
     private const uint DxgiFormatR16G16B16A16Float = 10;
     private const uint DxgiFormatR10G10B10A2Unorm = 24;
@@ -52,6 +67,16 @@ internal static class Program
         CaptureText.Initialize(args);
         Console.WriteLine("HDR SDR Capture Helper");
         Console.WriteLine("Capturing the primary monitor by default. Pass --picker to choose a screen/window.");
+
+        if (HasArg(args, "--check-store-license"))
+        {
+            return await CheckStoreLicenseAsync();
+        }
+
+        if (HasArg(args, "--server"))
+        {
+            return await RunCommandServerAsync(args);
+        }
 
         ToneMapOptions toneMap = ToneMapOptions.FromArgs(args);
         bool explicitOutput = HasArg(args, "--output");
@@ -137,6 +162,141 @@ internal static class Program
         }
 
         return null;
+    }
+
+    private static async Task<int> CheckStoreLicenseAsync()
+    {
+        try
+        {
+            StoreContext context = StoreContext.GetDefault();
+            StoreAppLicense license = await context.GetAppLicenseAsync();
+            return license.IsActive ? 0 : 2;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex);
+            return 1;
+        }
+    }
+
+    private static int ArgInt(string[] args, string name, int fallback)
+    {
+        string? text = ArgValue(args, name);
+        return int.TryParse(text, System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out int value) ? value : fallback;
+    }
+
+    private static async Task<int> RunCommandServerAsync(string[] args)
+    {
+        using CancellationTokenSource cancellation = new();
+        int parentPid = ArgInt(args, "--parent-pid", 0);
+        int idleTimeoutMs = Math.Max(5000, ArgInt(args, "--idle-timeout-ms", 90000));
+        if (parentPid > 0)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using Process parent = Process.GetProcessById(parentPid);
+                    while (!parent.HasExited && !cancellation.IsCancellationRequested)
+                    {
+                        await Task.Delay(1000, cancellation.Token);
+                        parent.Refresh();
+                    }
+                }
+                catch
+                {
+                }
+
+                cancellation.Cancel();
+            });
+        }
+
+        while (!cancellation.IsCancellationRequested)
+        {
+            try
+            {
+                await using NamedPipeServerStream pipe = new(
+                    PipeName,
+                    PipeDirection.In,
+                    1,
+                    PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous);
+                Task waitForConnection = pipe.WaitForConnectionAsync(cancellation.Token);
+                Task idleTimeout = Task.Delay(idleTimeoutMs, cancellation.Token);
+                Task completed = await Task.WhenAny(waitForConnection, idleTimeout);
+                if (completed == idleTimeout)
+                {
+                    if (System.Threading.Volatile.Read(ref activeRegionCapture) == 1)
+                    {
+                        continue;
+                    }
+                    break;
+                }
+                await waitForConnection;
+                using StreamReader reader = new(pipe, Encoding.Unicode, false, 1024, leaveOpen: true);
+                string? command = await reader.ReadLineAsync(cancellation.Token);
+                if (!string.IsNullOrWhiteSpace(command))
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await HandleServerCommandAsync(command);
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine(ex);
+                        }
+                    }, cancellation.Token);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (IOException)
+            {
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex);
+                await Task.Delay(250);
+            }
+        }
+
+        return 0;
+    }
+
+    private static async Task HandleServerCommandAsync(string command)
+    {
+        string[] parts = command.Split('\t');
+        if (parts.Length == 0) return;
+
+        if (string.Equals(parts[0], "select-region", StringComparison.OrdinalIgnoreCase))
+        {
+            if (System.Threading.Interlocked.Exchange(ref activeRegionCapture, 1) == 1)
+            {
+                return;
+            }
+
+            int language = parts.Length > 1 && int.TryParse(parts[1], System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out int parsedLanguage)
+                ? parsedLanguage
+                : 0;
+            if (language > 0) CaptureText.SetLanguageId(language);
+
+            ToneMapOptions toneMap = ToneMapOptions.FromArgs(Array.Empty<string>());
+            string outputPath = ResolveOutputPath(Array.Empty<string>());
+            try
+            {
+                await CaptureSelectedRegionFastAsync(DirectXPixelFormat.R16G16B16A16Float, outputPath, toneMap, false);
+            }
+            finally
+            {
+                System.Threading.Volatile.Write(ref activeRegionCapture, 0);
+            }
+        }
     }
 
     private static void DisposeIfPossible(object? value)
@@ -235,11 +395,19 @@ internal static class Program
                 System.Globalization.CultureInfo.InvariantCulture, out int id) &&
                 Enum.IsDefined(typeof(CaptureLanguage), id))
             {
-                language = (CaptureLanguage)id;
+                SetLanguageId(id);
                 return;
             }
 
             language = ResolveSystemLanguage();
+        }
+
+        public static void SetLanguageId(int id)
+        {
+            if (Enum.IsDefined(typeof(CaptureLanguage), id))
+            {
+                language = (CaptureLanguage)id;
+            }
         }
 
         public static string Get(CaptureString id)
@@ -863,10 +1031,26 @@ internal static class Program
         string outputPath,
         bool diagnostic)
     {
+        Bitmap previewBitmap;
+        try
+        {
+            previewBitmap = await previewTask;
+        }
+        catch (TimeoutException)
+        {
+            Console.WriteLine("Timed out waiting for a WGC frame.");
+            return 4;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Capture failed: {ex.GetType().Name}: {ex.Message}");
+            return 8;
+        }
+
         RegionSelectionForm.RegionSelectionResult? selection = null;
         RunSta(() =>
         {
-            using RegionSelectionForm form = new(previewTask);
+            using RegionSelectionForm form = new(previewBitmap);
             selection = form.ShowDialog() == DialogResult.OK
                 ? new RegionSelectionForm.RegionSelectionResult(
                     form.SelectedImageRegion,
@@ -1668,7 +1852,9 @@ internal static class Program
 
     private sealed class RegionSelectionForm : Form
     {
+        private const int EscapeHotkeyId = 6201;
         private Bitmap preview;
+        private readonly System.Drawing.Rectangle targetBounds;
 
     public enum EditMode
     {
@@ -2557,6 +2743,8 @@ internal static class Program
             Size = new System.Drawing.Size(1180, 760);
             MinimumSize = new System.Drawing.Size(900, 520);
             FormBorderStyle = FormBorderStyle.None;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
             Padding = new Padding(0);
             BackColor = Color.FromArgb(10, 12, 13);
             ForeColor = Color.White;
@@ -2623,6 +2811,11 @@ internal static class Program
             {
                 BeginInvoke(CopyToClipboard);
             }
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            e.Graphics.Clear(BackColor);
         }
 
         protected override void OnKeyDown(KeyEventArgs e)
@@ -3272,6 +3465,7 @@ internal static class Program
         private readonly System.Windows.Forms.Timer selectionTooltipTimer = new();
         private readonly List<EditOperation> operations = new();
         private readonly List<EditOperation> redoOperations = new();
+        private Bitmap? selectionBackgroundBitmap;
         private Bitmap? mosaicPreviewBitmap;
         private System.Drawing.Rectangle mosaicPreviewSelection;
         private int mosaicPreviewBrushSize;
@@ -3286,9 +3480,9 @@ internal static class Program
         private int pressedOptionItem = -1;
         private bool toolbarTooltipActive;
         private System.Drawing.Point toolbarTooltipAnchor;
-        private bool loadingMode;
         private bool mouseInputReady;
-        private System.Windows.Forms.Timer? loadingTimer;
+        private bool closingHidden;
+        private readonly nint previousForegroundWindow;
 
         public System.Drawing.Rectangle SelectedImageRegion { get; private set; }
 
@@ -3301,15 +3495,20 @@ internal static class Program
         public RegionSelectionForm(Bitmap preview)
         {
             this.preview = preview;
-            Bounds = Screen.PrimaryScreen?.Bounds ?? new System.Drawing.Rectangle(0, 0, preview.Width, preview.Height);
+            previousForegroundWindow = GetForegroundWindow();
+            targetBounds = Screen.PrimaryScreen?.Bounds ?? new System.Drawing.Rectangle(0, 0, preview.Width, preview.Height);
+            Bounds = new System.Drawing.Rectangle(-32000, -32000, targetBounds.Width, targetBounds.Height);
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
             TopMost = true;
             ShowInTaskbar = false;
             DoubleBuffered = true;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                     ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
             KeyPreview = true;
             Cursor = Cursors.Cross;
             BackColor = Color.Black;
+            mouseInputReady = true;
             Font = new Font(CaptureText.FontFamily, 9.0f, FontStyle.Regular, GraphicsUnit.Point);
 
             selectionTooltip.Visible = false;
@@ -3322,72 +3521,56 @@ internal static class Program
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
-            SetWindowDisplayAffinity(Handle, WdaExcludeFromCapture);
+            RegisterHotKey(Handle, EscapeHotkeyId, 0, VkEscape);
         }
 
-        // 加载模式构造函数：覆盖层立刻出现，先用快速桌面占位图，previewTask 完成后自动切换到 HDR 预览。
-        public RegionSelectionForm(Task<Bitmap> previewTask) : this(CaptureLoadingPreviewBitmap())
+        protected override void OnHandleDestroyed(EventArgs e)
         {
-            loadingMode = true;
-            mouseInputReady = false;
-
-            loadingTimer = new() { Interval = 80 };
-            loadingTimer.Tick += (_, _) =>
-            {
-                Invalidate(); // 动画
-                if (!previewTask.IsCompleted) return;
-                loadingTimer!.Stop();
-                loadingTimer.Dispose();
-                loadingTimer = null;
-                if (!previewTask.IsCompletedSuccessfully) { Close(); return; }
-                loadingMode = false;
-                ReplacePreview(previewTask.Result);
-                // 预览出现后 150ms 再开放鼠标输入，防止误判之前的鼠标状态
-                System.Windows.Forms.Timer readyTimer = new() { Interval = 150 };
-                readyTimer.Tick += (_, _) =>
-                {
-                    readyTimer.Stop();
-                    readyTimer.Dispose();
-                    mouseInputReady = true;
-                    Invalidate();
-                };
-                readyTimer.Start();
-            };
-            loadingTimer.Start();
-        }
-
-        private static Bitmap CaptureLoadingPreviewBitmap()
-        {
-            System.Drawing.Rectangle bounds = Screen.PrimaryScreen?.Bounds ?? new System.Drawing.Rectangle(0, 0, 1, 1);
-            Bitmap bitmap = new(Math.Max(1, bounds.Width), Math.Max(1, bounds.Height), PixelFormat.Format32bppArgb);
-            bitmap.SetResolution(96.0f, 96.0f);
-            try
-            {
-                using Graphics graphics = Graphics.FromImage(bitmap);
-                graphics.CopyFromScreen(bounds.Left, bounds.Top, 0, 0, bitmap.Size, CopyPixelOperation.SourceCopy);
-            }
-            catch
-            {
-                using Graphics graphics = Graphics.FromImage(bitmap);
-                graphics.Clear(Color.Black);
-            }
-            return bitmap;
+            UnregisterHotKey(Handle, EscapeHotkeyId);
+            base.OnHandleDestroyed(e);
         }
 
         public void ReplacePreview(Bitmap nextPreview)
         {
             Bitmap oldPreview = preview;
             preview = nextPreview;
+            BuildSelectionBackgroundCache();
             DisposeMosaicPreviewCache();
             Invalidate();
             oldPreview.Dispose();
         }
 
-        protected override void OnFormClosed(FormClosedEventArgs e)
+        private void BuildSelectionBackgroundCache()
         {
-            loadingTimer?.Stop();
-            loadingTimer?.Dispose();
-            base.OnFormClosed(e);
+            selectionBackgroundBitmap?.Dispose();
+            selectionBackgroundBitmap = null;
+            if (preview.Width <= 0 || preview.Height <= 0) return;
+
+            Bitmap bitmap = new(preview.Width, preview.Height, PixelFormat.Format32bppPArgb);
+            bitmap.SetResolution(preview.HorizontalResolution, preview.VerticalResolution);
+            using Graphics graphics = Graphics.FromImage(bitmap);
+            graphics.Clear(Color.Black);
+            graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+            graphics.PixelOffsetMode = PixelOffsetMode.Half;
+            graphics.DrawImageUnscaled(preview, 0, 0);
+            using SolidBrush shade = new(Color.FromArgb(96, 0, 0, 0));
+            graphics.FillRectangle(shade, 0, 0, bitmap.Width, bitmap.Height);
+            selectionBackgroundBitmap = bitmap;
+        }
+
+        private void InvalidateSelectionChange(System.Drawing.Rectangle oldSelection, System.Drawing.Rectangle newSelection)
+        {
+            System.Drawing.Rectangle dirty = oldSelection.Width <= 0 || oldSelection.Height <= 0
+                ? newSelection
+                : newSelection.Width <= 0 || newSelection.Height <= 0
+                    ? oldSelection
+                    : System.Drawing.Rectangle.Union(oldSelection, newSelection);
+            dirty = InflateRectangle(dirty, 18);
+            dirty.Intersect(ClientRectangle);
+            if (dirty.Width > 0 && dirty.Height > 0)
+            {
+                Invalidate(dirty);
+            }
         }
 
         private void ShowSelectionTooltip()
@@ -3645,6 +3828,15 @@ internal static class Program
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
+            BuildSelectionBackgroundCache();
+            Refresh();
+            Bounds = targetBounds;
+            SetWindowPos(Handle, HwndTopmost, targetBounds.Left, targetBounds.Top,
+                targetBounds.Width, targetBounds.Height, SwpShowWindow);
+            BuildSelectionBackgroundCache();
+            Refresh();
+            BringToFront();
+            SetForegroundWindow(Handle);
             Activate();
             Focus();
         }
@@ -3654,45 +3846,68 @@ internal static class Program
             if (disposing)
             {
                 selectionTooltipTimer.Dispose();
+                selectionBackgroundBitmap?.Dispose();
                 mosaicPreviewBitmap?.Dispose();
                 preview.Dispose();
             }
             base.Dispose(disposing);
         }
 
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            HideBeforeClose();
+            base.OnFormClosing(e);
+        }
+
+        private void HideBeforeClose()
+        {
+            if (closingHidden || !IsHandleCreated) return;
+            closingHidden = true;
+            try
+            {
+                SetWindowPos(Handle, HwndNoTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
+                if (previousForegroundWindow != 0 &&
+                    previousForegroundWindow != Handle &&
+                    IsWindow(previousForegroundWindow))
+                {
+                    SetForegroundWindow(previousForegroundWindow);
+                }
+                ShowWindow(Handle, SwHide);
+                SetWindowPos(Handle, HwndTopmost, -32000, -32000,
+                    Math.Max(1, Width), Math.Max(1, Height), SwpHideWindow | SwpNoActivate);
+                Hide();
+            }
+            catch
+            {
+            }
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            e.Graphics.Clear(Color.Black);
+        }
+
         protected override void OnPaint(PaintEventArgs e)
         {
-            if (loadingMode)
-            {
-                e.Graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
-                e.Graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
-                System.Drawing.Rectangle loadingImageBounds = PreviewImageBounds();
-                e.Graphics.DrawImage(preview, loadingImageBounds);
-                using SolidBrush loadingShade = new(Color.FromArgb(116, 0, 0, 0));
-                e.Graphics.FillRectangle(loadingShade, ClientRectangle);
-                string loadText = CaptureText.Get(CaptureString.ProcessingStatus);
-                loadText += new string('.', (DateTime.Now.Millisecond / 260) % 4);
-                using Font loadFont = new(CaptureText.FontFamily, 14.0f, FontStyle.Regular, GraphicsUnit.Point);
-                SizeF ts = e.Graphics.MeasureString(loadText, loadFont);
-                RectangleF panel = new(
-                    (ClientSize.Width - ts.Width) / 2f - 18,
-                    (ClientSize.Height - ts.Height) / 2f - 12,
-                    ts.Width + 36,
-                    ts.Height + 24);
-                using SolidBrush panelBrush = new(Color.FromArgb(188, 24, 27, 30));
-                e.Graphics.FillRectangle(panelBrush, panel);
-                using SolidBrush loadBrush = new(Color.FromArgb(200, 255, 255, 255));
-                e.Graphics.DrawString(loadText, loadFont, loadBrush,
-                    (ClientSize.Width - ts.Width) / 2f, (ClientSize.Height - ts.Height) / 2f);
-                return;
-            }
-
             e.Graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
             e.Graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
             System.Drawing.Rectangle imageBounds = PreviewImageBounds();
-            e.Graphics.DrawImage(preview, imageBounds);
-            using SolidBrush shade = new(Color.FromArgb(96, 0, 0, 0));
-            e.Graphics.FillRectangle(shade, ClientRectangle);
+            if (selectionBackgroundBitmap is null ||
+                selectionBackgroundBitmap.Width != preview.Width ||
+                selectionBackgroundBitmap.Height != preview.Height)
+            {
+                BuildSelectionBackgroundCache();
+            }
+            if (selectionBackgroundBitmap is not null)
+            {
+                e.Graphics.DrawImage(selectionBackgroundBitmap, imageBounds);
+            }
+            else
+            {
+                e.Graphics.DrawImage(preview, imageBounds);
+                using SolidBrush shade = new(Color.FromArgb(96, 0, 0, 0));
+                e.Graphics.FillRectangle(shade, ClientRectangle);
+            }
 
             if (!selectionReady && !dragging)
             {
@@ -3866,7 +4081,7 @@ internal static class Program
 
         protected override void OnMouseDown(MouseEventArgs e)
         {
-            if (loadingMode || !mouseInputReady) return;
+            if (!mouseInputReady) return;
             if (e.Button != MouseButtons.Left) return;
             if (optionsVisible)
             {
@@ -3919,7 +4134,7 @@ internal static class Program
 
         protected override void OnMouseMove(MouseEventArgs e)
         {
-            if (loadingMode || !mouseInputReady) return;
+            if (!mouseInputReady) return;
             UpdateSelectionCursor(e.Location);
             if (optionsVisible)
             {
@@ -3963,13 +4178,14 @@ internal static class Program
                 return;
             }
             if (!dragging) return;
+            System.Drawing.Rectangle oldSelection = CurrentSelection();
             dragCurrent = e.Location;
-            Invalidate();
+            InvalidateSelectionChange(oldSelection, CurrentSelection());
         }
 
         protected override void OnMouseUp(MouseEventArgs e)
         {
-            if (loadingMode || !mouseInputReady) return;
+            if (!mouseInputReady) return;
             if (pressedOptionItem >= 0 && e.Button == MouseButtons.Left)
             {
                 int pressed = pressedOptionItem;
@@ -4072,6 +4288,7 @@ internal static class Program
         {
             if (!selectionReady || SelectedImageRegion.Width <= 0 || SelectedImageRegion.Height <= 0) return;
             CommitAction = action;
+            HideBeforeClose();
             DialogResult = DialogResult.OK;
             Close();
         }
@@ -4188,8 +4405,7 @@ internal static class Program
             switch (item.Action)
             {
                 case ToolbarAction.Cancel:
-                    DialogResult = DialogResult.Cancel;
-                    Close();
+                    CancelSelection();
                     break;
                 case ToolbarAction.ToolMarker:
                     SelectToolbarTool(EditMode.Marker, item.Rect);
@@ -4558,13 +4774,30 @@ internal static class Program
 
         protected override void OnKeyDown(KeyEventArgs e)
         {
-            if (loadingMode || !mouseInputReady) return;
+            if (!mouseInputReady) return;
             if (e.KeyCode == Keys.Escape)
             {
-                DialogResult = DialogResult.Cancel;
-                Close();
+                CancelSelection();
             }
             base.OnKeyDown(e);
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WmHotkey && m.WParam.ToInt32() == EscapeHotkeyId)
+            {
+                CancelSelection();
+                return;
+            }
+
+            base.WndProc(ref m);
+        }
+
+        private void CancelSelection()
+        {
+            HideBeforeClose();
+            DialogResult = DialogResult.Cancel;
+            Close();
         }
 
         private System.Drawing.Rectangle CurrentSelection()
@@ -4668,10 +4901,31 @@ internal static class Program
     private static extern nint GetDesktopWindow();
 
     [DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindow(nint hwnd);
+
+    [DllImport("user32.dll")]
     private static extern nint MonitorFromWindow(nint hwnd, uint flags);
 
     [DllImport("user32.dll")]
     private static extern bool SetWindowDisplayAffinity(nint hwnd, uint affinity);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool RegisterHotKey(nint hwnd, int id, uint fsModifiers, int vk);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool UnregisterHotKey(nint hwnd, int id);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowPos(nint hwnd, nint hwndInsertAfter, int x, int y, int cx, int cy, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(nint hwnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(nint hwnd);
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(nint hwnd, int attribute, ref int attributeValue, int attributeSize);
