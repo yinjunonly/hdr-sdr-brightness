@@ -57,9 +57,9 @@ Keywords:
 HDR SDR brightness
 SDR content brightness
 Windows HDR brightness
-HDR washed out
-OLED HDR
-Night Light SDR
+HDR screenshot overexposed
+HDR screenshot blown out
+HDR capture washed out
 SDR white level
 ```
 
@@ -69,7 +69,7 @@ What's new in this version:
 Improves HDR screenshot capture responsiveness: region selection is single-instance, stays on top reliably, supports immediate Esc cancel, and drags more smoothly.
 Starts the screenshot helper only when capture is used, keeps it warm briefly for repeated screenshots, and exits it after about 90 seconds idle to preserve low background memory usage.
 Fixes custom screenshot hotkeys so saved shortcuts echo correctly and remain active after Apply, OK, and restart.
-Fixes trial-expired Store background startup behavior so the app no longer keeps auto-launching after the free trial is no longer active.
+Default screenshot hotkeys remain Alt+S for region capture and Shift+Alt+S for fullscreen capture.
 ```
 
 Additional system requirements:
@@ -125,9 +125,9 @@ Keywords:
 HDR SDR 亮度
 SDR 内容亮度
 Windows HDR 亮度
-HDR 发灰
-OLED HDR
-夜间模式 SDR
+HDR 截图过曝
+HDR 截图发白
+Windows HDR 截图过曝
 SDR 白点
 ```
 
@@ -137,7 +137,7 @@ What's new in this version:
 继续优化 HDR 截图体验：区域截图遮罩保持单例、可靠置顶，Esc 可立即取消，鼠标框选更顺滑。
 截图 helper 改为按需启动，短时间内连续截图会保温复用，空闲约 90 秒后自动退出，避免常驻占用后台内存。
 修复自定义截图快捷键保存后回显不正确、应用或重启后可能回到旧值的问题。
-修复 Microsoft Store 试用结束后后台自启仍会尝试拉起程序的问题。
+默认截图快捷键仍为 Alt+S 区域截图、Shift+Alt+S 全屏截图。
 ```
 
 Additional system requirements:

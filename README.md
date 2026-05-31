@@ -33,7 +33,7 @@ Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no inst
 - Makes HDR screenshot capture smoother: region selection is single-instance, stays on top reliably, responds to `Esc` immediately, and drags more fluidly.
 - Keeps the tray app lightweight at idle by starting the screenshot helper only when capture is used, then letting it exit after a short idle period.
 - Fixes custom screenshot hotkeys so saved shortcuts echo correctly and keep working after Apply, OK, and restart.
-- Prevents Store trial-expired background startup from continuing to auto-launch after the license is no longer active.
+- Keeps the default screenshot shortcuts easy to discover: `Alt+S` for region capture and `Shift+Alt+S` for fullscreen capture.
 
 ![HDR screenshot capture workflow](image/README/hdr-screenshot-1.0.10.png)
 
@@ -181,6 +181,12 @@ SDR content too dark in HDR
 Windows HDR washed out
 Windows 11 HDR washed out
 Auto HDR washed out
+HDR screenshot overexposed
+HDR screenshot blown out
+HDR screenshot too bright
+Windows HDR screenshot overexposure
+Windows screenshot HDR overexposed
+HDR capture washed out
 OLED HDR brightness
 QD-OLED HDR brightness
 MiniLED HDR brightness
@@ -221,7 +227,7 @@ HdrSdrBrightness-1.0.10-win64.zip
 - 继续优化 HDR 截图体验：区域截图遮罩保持单例、可靠置顶，`Esc` 可立即取消，鼠标框选更顺滑。
 - 截图 helper 改为按需启动，短时间内连续截图会保温复用，空闲约 90 秒后自动退出，避免常驻占用后台内存。
 - 修复自定义截图快捷键保存后回显不正确、应用或重启后可能回到旧值的问题。
-- 修复 Microsoft Store 试用结束后后台自启仍会尝试拉起程序的问题。
+- 默认截图快捷键保持清晰可见：`Alt+S` 为区域截图，`Shift+Alt+S` 为全屏截图。
 
 ![HDR 截图捕获流程](image/README/hdr-screenshot-1.0.10-zh.png)
 
@@ -368,6 +374,12 @@ HDR 开启后颜色发灰
 HDR 发灰
 HDR 洗白
 Auto HDR 发灰
+HDR 截图过曝
+HDR 截图发白
+HDR 截图太亮
+HDR 截图高光丢失
+Windows HDR 截图过曝
+Windows 截图 HDR 过曝
 OLED HDR 太亮
 OLED HDR 太暗
 QD-OLED HDR 亮度
