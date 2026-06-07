@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HDR SDR Brightness Assistant</title>
+  <meta name="description" content="Keep SDR apps comfortable while Windows HDR stays on. Adjust day and night SDR brightness and capture HDR screenshots that do not look blown out.">
+  <link rel="canonical" href="https://yinjunonly.github.io/hdr-sdr-brightness/">
+  <link rel="alternate" hreflang="zh-CN" href="https://yinjunonly.github.io/hdr-sdr-brightness/zh-cn.html">
+  <link rel="alternate" hreflang="en" href="https://yinjunonly.github.io/hdr-sdr-brightness/">
+  <meta property="og:title" content="HDR SDR Brightness Assistant">
+  <meta property="og:description" content="Fix washed-out or uncomfortable SDR apps while Windows HDR stays enabled.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://yinjunonly.github.io/hdr-sdr-brightness/">
+  <meta property="og:image" content="https://yinjunonly.github.io/hdr-sdr-brightness/assets/product/hdr-screenshot-comparison.png">
+  <meta property="og:site_name" content="HDR SDR Brightness Assistant">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="HDR SDR Brightness Assistant">
+  <meta name="twitter:description" content="Keep SDR apps comfortable while Windows HDR stays on.">
+  <meta name="twitter:image" content="https://yinjunonly.github.io/hdr-sdr-brightness/assets/product/hdr-screenshot-comparison.png">
+  <meta name="theme-color" content="#101417">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #101417;
+      --panel: #171d21;
+      --panel-2: #20272d;
+      --text: #f3f7fa;
+      --muted: #a9b4bd;
+      --line: #34404a;
+      --accent: #67d6a0;
+      --accent-2: #77a7ff;
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+      font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background:
+        linear-gradient(180deg, rgba(16, 20, 23, 0.78), rgba(16, 20, 23, 0.96)),
+        url("assets/product/hdr-screenshot-comparison.png") center top / cover fixed;
+      color: var(--text);
+      line-height: 1.55;
+      overflow-x: hidden;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    .nav {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 16px clamp(20px, 5vw, 72px);
+      backdrop-filter: blur(18px);
+      background: rgba(16, 20, 23, 0.78);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      font-weight: 650;
+    }
+
+    .mark {
+      width: 32px;
+      height: 32px;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 7px;
+      background: linear-gradient(135deg, #67d6a0, #77a7ff);
+      box-shadow: 0 12px 24px rgba(103, 214, 160, 0.2);
+      flex: 0 0 auto;
+    }
+
+    .links {
+      display: flex;
+      gap: 18px;
+      color: var(--muted);
+      font-size: 14px;
+      white-space: nowrap;
+    }
+
+    .links a {
+      text-decoration: none;
+    }
+
+    .hero {
+      min-height: min(760px, 92vh);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      align-items: end;
+      padding: clamp(96px, 16vh, 160px) clamp(20px, 5vw, 72px) clamp(56px, 10vh, 96px);
+    }
+
+    .hero-inner {
+      width: 100%;
+      max-width: 980px;
+      min-width: 0;
+    }
+
+    .eyebrow {
+      color: var(--accent);
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 880px;
+      font-size: clamp(42px, 7vw, 84px);
+      line-height: 1.02;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: min(720px, 100%);
+      margin: 24px 0 0;
+      color: #d6dee4;
+      font-size: clamp(18px, 2vw, 23px);
+    }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 32px;
+    }
+
+    .store-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 56px;
+      transition: transform 160ms ease, filter 160ms ease;
+    }
+
+    .store-badge:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.08);
+    }
+
+    .store-badge img {
+      width: 212px;
+      max-width: 100%;
+      display: block;
+    }
+
+    .ghost {
+      min-height: 52px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 18px;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      border-radius: 7px;
+      color: #e8eef2;
+      text-decoration: none;
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    main {
+      background: var(--bg);
+    }
+
+    section {
+      padding: clamp(52px, 8vw, 92px) clamp(20px, 5vw, 72px);
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .section-inner {
+      width: 100%;
+      max-width: 1180px;
+      margin: 0 auto;
+      min-width: 0;
+    }
+
+    .section-title {
+      max-width: 760px;
+      margin-bottom: 32px;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: clamp(30px, 4vw, 48px);
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+
+    .section-title p,
+    .split p,
+    .faq p {
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .feature {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      min-height: 164px;
+    }
+
+    .feature h3,
+    .faq h3 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      line-height: 1.3;
+    }
+
+    .feature p {
+      color: var(--muted);
+      margin: 0;
+      font-size: 15px;
+    }
+
+    .showcase {
+      display: grid;
+      grid-template-columns: 1.12fr 0.88fr;
+      gap: 24px;
+      align-items: center;
+    }
+
+    .image-frame {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+
+    .image-frame img {
+      width: 100%;
+      display: block;
+    }
+
+    .stack {
+      display: grid;
+      gap: 16px;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      align-items: start;
+    }
+
+    .faq {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .cta {
+      background: #f4f7f9;
+      color: #0e1316;
+    }
+
+    .cta p {
+      color: #4f5b64;
+    }
+
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+      color: var(--muted);
+      font-size: 14px;
+      padding: 28px clamp(20px, 5vw, 72px);
+      background: #0b0f12;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .footer a {
+      color: #d6dee4;
+      text-decoration: none;
+      margin-left: 14px;
+    }
+
+    @media (max-width: 860px) {
+      body {
+        background-attachment: scroll;
+      }
+
+      .links {
+        display: none;
+      }
+
+      .hero {
+        min-height: 760px;
+        padding-top: 110px;
+      }
+
+      .grid,
+      .showcase,
+      .split,
+      .faq {
+        grid-template-columns: 1fr;
+      }
+
+      .feature {
+        min-height: auto;
+      }
+
+      h1 {
+        font-size: clamp(38px, 12vw, 52px);
+      }
+
+      .lead {
+        max-width: 310px;
+        font-size: 17px;
+      }
+
+      .actions {
+        align-items: stretch;
+      }
+
+      .store-badge,
+      .ghost {
+        width: 100%;
+        max-width: 260px;
+        justify-content: center;
+      }
+
+      .store-badge img {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="nav">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"></span>
+      <span>HDR SDR Brightness Assistant</span>
+    </div>
+    <nav class="links" aria-label="Primary">
+      <a href="#features">Features</a>
+      <a href="#screenshots">Screenshots</a>
+      <a href="#faq">FAQ</a>
+      <a href="support.html">Support</a>
+      <a href="zh-cn.html">中文</a>
+    </nav>
+  </header>
+
+  <div class="hero">
+    <div class="hero-inner">
+      <div class="eyebrow">Windows HDR utility</div>
+      <h1>HDR SDR Brightness Assistant</h1>
+      <p class="lead">Keep SDR apps comfortable while Windows HDR stays on. Set day and night SDR brightness, recover your preferred level automatically, and capture HDR screenshots that do not look blown out.</p>
+      <div class="actions">
+        <a class="store-badge" href="https://apps.microsoft.com/detail/9nksvcpjl35j?cid=product-page" aria-label="Get HDR SDR Brightness Assistant from Microsoft Store">
+          <img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft">
+        </a>
+        <a class="ghost" href="#screenshots">View screenshots</a>
+      </div>
+    </div>
+  </div>
+
+  <main>
+    <section id="features">
+      <div class="section-inner">
+        <div class="section-title">
+          <h2>Two Windows HDR annoyances, one quiet tray app.</h2>
+          <p>Built for OLED, QD-OLED, MiniLED, HDR monitors, HDR TVs, and HDR laptop panels where regular SDR apps can become too bright, too dim, or washed out after HDR is enabled.</p>
+        </div>
+        <div class="grid">
+          <article class="feature">
+            <h3>Comfortable SDR brightness</h3>
+            <p>Apply your preferred Windows SDR content brightness while HDR remains enabled for games, video, and supported apps.</p>
+          </article>
+          <article class="feature">
+            <h3>Day and night settings</h3>
+            <p>Use separate SDR brightness values, follow Windows Night Light, or rely on the built-in fallback schedule.</p>
+          </article>
+          <article class="feature">
+            <h3>Automatic recovery</h3>
+            <p>If Windows or another app changes SDR brightness, the tray app can restore your configured value.</p>
+          </article>
+          <article class="feature">
+            <h3>HDR screenshots</h3>
+            <p>Capture region or fullscreen HDR screenshots with tone mapping, clipboard copy, PNG save, and simple annotations.</p>
+          </article>
+          <article class="feature">
+            <h3>Lightweight by default</h3>
+            <p>No service, no driver, no account login, no telemetry. The screenshot helper starts only when capture is used.</p>
+          </article>
+          <article class="feature">
+            <h3>Store trial</h3>
+            <p>The Microsoft Store version is a paid app with a full-feature trial and no subscriptions or in-app purchases.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="screenshots">
+      <div class="section-inner showcase">
+        <div class="image-frame">
+          <img src="assets/product/settings-dark.png" alt="HDR SDR Brightness Assistant settings in dark mode">
+        </div>
+        <div class="stack">
+          <div class="section-title">
+            <h2>Designed for daily use from the tray.</h2>
+            <p>Pick comfortable SDR brightness values, preview the result, apply once, then let the app stay out of the way.</p>
+          </div>
+          <div class="image-frame">
+            <img src="assets/product/tray-menu.png" alt="Tray menu with day and night brightness controls">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-inner split">
+        <div>
+          <h2>Share HDR screenshots without the washed-out look.</h2>
+          <p>Regular screenshot tools can turn HDR content into a pale or overexposed image. The built-in capture workflow is made for region and fullscreen HDR screenshots on Windows.</p>
+        </div>
+        <div class="image-frame">
+          <img src="assets/product/hdr-preview-controls.png" alt="HDR screenshot preview and annotation controls">
+        </div>
+      </div>
+    </section>
+
+    <section id="faq">
+      <div class="section-inner">
+        <div class="section-title">
+          <h2>FAQ</h2>
+        </div>
+        <div class="faq">
+          <article class="feature">
+            <h3>Does it change game HDR?</h3>
+            <p>No. It targets Windows SDR content brightness while HDR is enabled, so HDR games and videos can stay HDR.</p>
+          </article>
+          <article class="feature">
+            <h3>Does it need admin rights?</h3>
+            <p>No. The app runs as a normal user app from the tray and does not install a driver or Windows service.</p>
+          </article>
+          <article class="feature">
+            <h3>Does it collect analytics?</h3>
+            <p>No. Settings stay local. The app does not require an account and does not include telemetry or third-party tracking.</p>
+          </article>
+          <article class="feature">
+            <h3>Which languages are supported?</h3>
+            <p>Auto, Simplified Chinese, Traditional Chinese, English, Korean, Japanese, Russian, and German.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="cta">
+      <div class="section-inner split">
+        <div>
+          <h2>Try it from Microsoft Store.</h2>
+          <p>Install the Store version to use the full-feature trial, receive updates through Microsoft Store, and keep setup simple.</p>
+        </div>
+        <div class="actions">
+          <a class="store-badge" href="https://apps.microsoft.com/detail/9nksvcpjl35j?cid=product-page-bottom" aria-label="Get HDR SDR Brightness Assistant from Microsoft Store">
+            <img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft">
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>© 2026 HDR SDR Brightness Assistant</span>
+    <span>
+      <a href="privacy-policy.html">Privacy</a>
+      <a href="support.html">Support</a>
+      <a href="https://github.com/yinjunonly/hdr-sdr-brightness">GitHub</a>
+    </span>
+  </footer>
+</body>
+</html>

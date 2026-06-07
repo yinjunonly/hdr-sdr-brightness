@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://yinjunonly.github.io/hdr-sdr-brightness/sitemap.xml
