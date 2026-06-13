@@ -190,7 +190,8 @@ internal static class Program
     {
         using CancellationTokenSource cancellation = new();
         int parentPid = ArgInt(args, "--parent-pid", 0);
-        int idleTimeoutMs = Math.Max(5000, ArgInt(args, "--idle-timeout-ms", 90000));
+        int requestedIdleTimeoutMs = ArgInt(args, "--idle-timeout-ms", 90000);
+        int idleTimeoutMs = requestedIdleTimeoutMs <= 0 ? 0 : Math.Max(5000, requestedIdleTimeoutMs);
         if (parentPid > 0)
         {
             _ = Task.Run(async () =>
@@ -223,9 +224,10 @@ internal static class Program
                     PipeTransmissionMode.Byte,
                     PipeOptions.Asynchronous);
                 Task waitForConnection = pipe.WaitForConnectionAsync(cancellation.Token);
-                Task idleTimeout = Task.Delay(idleTimeoutMs, cancellation.Token);
-                Task completed = await Task.WhenAny(waitForConnection, idleTimeout);
-                if (completed == idleTimeout)
+                Task completed = idleTimeoutMs > 0
+                    ? await Task.WhenAny(waitForConnection, Task.Delay(idleTimeoutMs, cancellation.Token))
+                    : await Task.WhenAny(waitForConnection);
+                if (completed != waitForConnection)
                 {
                     if (System.Threading.Volatile.Read(ref activeRegionCapture) == 1)
                     {
@@ -989,6 +991,8 @@ internal static class Program
         ToneMapOptions toneMap,
         bool diagnostic)
     {
+        System.Drawing.Rectangle bounds = Screen.PrimaryScreen?.Bounds ?? new System.Drawing.Rectangle(0, 0, 1, 1);
+        Bitmap initialPreview = CreateInitialPreviewBitmap(bounds.Width, bounds.Height);
         Task<ReadbackResult> regionTask = Task.Run(async () =>
             await CapturePrimaryMonitorFrameAsync(requestedFormat, toneMap, diagnostic));
         Task<Bitmap> previewTask = regionTask.ContinueWith(t =>
@@ -996,7 +1000,7 @@ internal static class Program
                 ? CreateBitmapFromBgra(t.Result.Width, t.Result.Height, t.Result.Bgra)
                 : throw t.Exception!.GetBaseException(),
             TaskContinuationOptions.None);
-        return await SelectAndCommitRegionAsync(regionTask, previewTask, outputPath, diagnostic);
+        return await SelectAndCommitRegionAsync(regionTask, previewTask, outputPath, diagnostic, initialPreview);
     }
 
     private static async Task<ReadbackResult> CapturePrimaryMonitorFrameAsync(
@@ -1029,28 +1033,70 @@ internal static class Program
         Task<ReadbackResult> regionTask,
         Task<Bitmap> previewTask,
         string outputPath,
-        bool diagnostic)
+        bool diagnostic,
+        Bitmap? initialPreview = null)
     {
         Bitmap previewBitmap;
-        try
+        if (initialPreview is null)
         {
-            previewBitmap = await previewTask;
+            try
+            {
+                previewBitmap = await previewTask;
+            }
+            catch (TimeoutException)
+            {
+                Console.WriteLine("Timed out waiting for a WGC frame.");
+                return 4;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Capture failed: {ex.GetType().Name}: {ex.Message}");
+                return 8;
+            }
         }
-        catch (TimeoutException)
+        else
         {
-            Console.WriteLine("Timed out waiting for a WGC frame.");
-            return 4;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Capture failed: {ex.GetType().Name}: {ex.Message}");
-            return 8;
+            previewBitmap = initialPreview;
         }
 
         RegionSelectionForm.RegionSelectionResult? selection = null;
         RunSta(() =>
         {
             using RegionSelectionForm form = new(previewBitmap);
+            if (initialPreview is not null)
+            {
+                form.Shown += (_, _) =>
+                {
+                    _ = previewTask.ContinueWith(t =>
+                    {
+                        if (!t.IsCompletedSuccessfully) return;
+                        Bitmap replacement = t.Result;
+                        try
+                        {
+                            if (form.IsDisposed || !form.IsHandleCreated)
+                            {
+                                replacement.Dispose();
+                                return;
+                            }
+
+                            form.BeginInvoke((Action)(() =>
+                            {
+                                if (form.IsDisposed)
+                                {
+                                    replacement.Dispose();
+                                    return;
+                                }
+
+                                form.ReplacePreview(replacement);
+                            }));
+                        }
+                        catch
+                        {
+                            replacement.Dispose();
+                        }
+                    }, TaskScheduler.Default);
+                };
+            }
             selection = form.ShowDialog() == DialogResult.OK
                 ? new RegionSelectionForm.RegionSelectionResult(
                     form.SelectedImageRegion,

@@ -48,9 +48,11 @@ const UINT_PTR kRecheckTimer = 1;
 const UINT_PTR kTransitionTimer = 2;
 const UINT_PTR kSettingsAnimationTimer = 3;
 const UINT_PTR kSupportCaretTimer = 4;
+const UINT_PTR kCaptureWarmupTimer = 5;
 const UINT kRecheckMs = 15 * 1000;
 const UINT kTransitionMs = 45;
 const UINT kSettingsAnimationMs = 33;
+const UINT kCaptureWarmupMs = 1500;
 const UINT32 kTransitionStepLevel = 50;
 const int kSettingsClientWidth = 640;
 const int kSettingsClientHeight = 620;
@@ -775,7 +777,7 @@ void StartCaptureHelperServer() {
     std::wstringstream command;
     command << QuotePath(helperPath)
             << L" --server --parent-pid " << GetCurrentProcessId()
-            << L" --idle-timeout-ms 90000"
+            << L" --idle-timeout-ms 0"
             << L" --lang " << CurrentUiLanguage();
     LaunchDetached(command.str(), DirectoryFromPath(helperPath));
 }
@@ -7452,6 +7454,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
         AddTrayIcon(hwnd);
         StartRegistryThread();
         SetTimer(hwnd, kRecheckTimer, kRecheckMs, NULL);
+        SetTimer(hwnd, kCaptureWarmupTimer, kCaptureWarmupMs, NULL);
         PostMessageW(hwnd, kApplyMessage, TRUE, 0);
         return 0;
     case kApplyMessage:
@@ -7470,6 +7473,11 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
         }
         if (wParam == kTransitionTimer) {
             ContinueBrightnessTransition();
+            return 0;
+        }
+        if (wParam == kCaptureWarmupTimer) {
+            KillTimer(hwnd, kCaptureWarmupTimer);
+            StartCaptureHelperServer();
             return 0;
         }
         break;
@@ -7563,6 +7571,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
     case WM_DESTROY:
         if (g_supportWindow) DestroyWindow(g_supportWindow);
         KillTimer(hwnd, kRecheckTimer);
+        KillTimer(hwnd, kCaptureWarmupTimer);
         StopRegistryThread();
         RemoveTrayIcon();
         CleanupUiResources();

@@ -23,16 +23,16 @@ Install from the [Microsoft Store](https://apps.microsoft.com/detail/9nksvcpjl35
 Use the Windows x64 package:
 
 ```text
-HdrSdrBrightness-1.0.10-win64.zip
+HdrSdrBrightness-1.0.11-win64.zip
 ```
 
 Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no installer, no service, and no administrator privileges are required.
 
-### What's New In 1.0.10
+### What's New In 1.0.11
 
-- Makes HDR screenshot capture smoother: region selection is single-instance, stays on top reliably, responds to `Esc` immediately, and drags more fluidly.
-- Keeps the tray app lightweight at idle by starting the screenshot helper only when capture is used, then letting it exit after a short idle period.
-- Fixes custom screenshot hotkeys so saved shortcuts echo correctly and keep working after Apply, OK, and restart.
+- Reduces HDR screenshot cold-start latency by warming the capture helper shortly after the tray app starts.
+- Keeps the capture helper alive with the tray app so repeated screenshots no longer pay the .NET/WinForms startup cost.
+- Shows the region selection overlay immediately with a fast desktop preview while the HDR/WGC tone-mapped frame finishes in the background.
 - Keeps the default screenshot shortcuts easy to discover: `Alt+S` for region capture and `Shift+Alt+S` for fullscreen capture.
 
 ![HDR screenshot capture workflow](image/README/hdr-screenshot-1.0.10.png)
@@ -130,7 +130,7 @@ Measured with the settings window closed and the app running in `--background` t
 
 Sampling method: 1 second process samples after a 5 second warm-up. CPU is calculated from `TotalProcessorTime` deltas and normalized across 12 logical processors. Actual values can vary by display count, HDR state, Windows build, GPU driver, and hardware.
 
-HDR screenshot capture is on demand. The tray app starts `HdrSdrCapture.exe` only when you use region or fullscreen capture, keeps it warm briefly for repeated screenshots, and lets it exit after about 90 seconds of no capture activity. While the helper is active, memory can temporarily rise because it uses .NET, WinForms, Windows Graphics Capture, and image buffers for tone mapping and editing; that cost is released after the helper exits.
+HDR screenshot capture is optimized for quick daily use. The tray app warms `HdrSdrCapture.exe` shortly after startup and keeps it alive with the tray process, so region capture can avoid repeated .NET/WinForms cold starts. The helper waits quietly on a named pipe while idle and does not keep a Windows Graphics Capture session running until a screenshot is requested. Memory is higher than the tray app alone while the helper is resident, but idle CPU/GPU usage should stay near zero.
 
 The background path is designed to stay quiet:
 
@@ -217,16 +217,16 @@ SDR white level
 Windows x64 用户下载：
 
 ```text
-HdrSdrBrightness-1.0.10-win64.zip
+HdrSdrBrightness-1.0.11-win64.zip
 ```
 
 解压后运行 `HdrSdrBrightness.exe`。这是便携程序：不需要安装，不创建服务，也不需要管理员权限。
 
-### 1.0.10 更新内容
+### 1.0.11 更新内容
 
-- 继续优化 HDR 截图体验：区域截图遮罩保持单例、可靠置顶，`Esc` 可立即取消，鼠标框选更顺滑。
-- 截图 helper 改为按需启动，短时间内连续截图会保温复用，空闲约 90 秒后自动退出，避免常驻占用后台内存。
-- 修复自定义截图快捷键保存后回显不正确、应用或重启后可能回到旧值的问题。
+- 降低 HDR 截图冷启动延迟：托盘程序启动后会提前预热截图 helper。
+- 截图 helper 会跟随托盘程序常驻，连续或间隔截图不再反复支付 .NET/WinForms 冷启动成本。
+- 区域截图会先用快速桌面预览立即显示框选界面，后台完成 HDR/WGC tone mapping 后再替换为 HDR 预览。
 - 默认截图快捷键保持清晰可见：`Alt+S` 为区域截图，`Shift+Alt+S` 为全屏截图。
 
 ![HDR 截图捕获流程](image/README/hdr-screenshot-1.0.10-zh.png)
@@ -324,7 +324,7 @@ https://afdian.com/a/injunaid/plan
 
 采样方式：预热 5 秒后，每 1 秒读取一次进程数据。CPU 使用进程 `TotalProcessorTime` 增量计算，并按 12 个逻辑处理器归一化。实际占用会随显示器数量、HDR 状态、Windows 版本、显卡驱动和硬件环境变化。
 
-HDR 截图是按需启动的。托盘主程序只有在使用区域截图或全屏截图时才会启动 `HdrSdrCapture.exe`，短时间连续截图会复用它，约 90 秒没有截图操作后自动退出。helper 活跃期间会因为 .NET、WinForms、Windows Graphics Capture、图像缓冲、色调映射和编辑预览临时占用更多内存；退出后这部分占用会释放，不属于常驻后台成本。
+HDR 截图针对日常快速使用做了优化。托盘主程序启动后会提前预热 `HdrSdrCapture.exe`，并让它跟随托盘进程保持运行，避免区域截图反复支付 .NET/WinForms 冷启动成本。helper 空闲时只等待命名管道命令，不会持续保持 Windows Graphics Capture 会话；相比单独的托盘进程，内存占用会更高，但空闲 CPU/GPU 占用应接近 0。
 
 后台路径尽量保持安静：
 
