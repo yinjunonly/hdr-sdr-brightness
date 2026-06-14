@@ -991,8 +991,6 @@ internal static class Program
         ToneMapOptions toneMap,
         bool diagnostic)
     {
-        System.Drawing.Rectangle bounds = Screen.PrimaryScreen?.Bounds ?? new System.Drawing.Rectangle(0, 0, 1, 1);
-        Bitmap initialPreview = CreateInitialPreviewBitmap(bounds.Width, bounds.Height);
         Task<ReadbackResult> regionTask = Task.Run(async () =>
             await CapturePrimaryMonitorFrameAsync(requestedFormat, toneMap, diagnostic));
         Task<Bitmap> previewTask = regionTask.ContinueWith(t =>
@@ -1000,7 +998,7 @@ internal static class Program
                 ? CreateBitmapFromBgra(t.Result.Width, t.Result.Height, t.Result.Bgra)
                 : throw t.Exception!.GetBaseException(),
             TaskContinuationOptions.None);
-        return await SelectAndCommitRegionAsync(regionTask, previewTask, outputPath, diagnostic, initialPreview);
+        return await SelectAndCommitRegionAsync(regionTask, previewTask, outputPath, diagnostic);
     }
 
     private static async Task<ReadbackResult> CapturePrimaryMonitorFrameAsync(
@@ -1033,70 +1031,28 @@ internal static class Program
         Task<ReadbackResult> regionTask,
         Task<Bitmap> previewTask,
         string outputPath,
-        bool diagnostic,
-        Bitmap? initialPreview = null)
+        bool diagnostic)
     {
         Bitmap previewBitmap;
-        if (initialPreview is null)
+        try
         {
-            try
-            {
-                previewBitmap = await previewTask;
-            }
-            catch (TimeoutException)
-            {
-                Console.WriteLine("Timed out waiting for a WGC frame.");
-                return 4;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Capture failed: {ex.GetType().Name}: {ex.Message}");
-                return 8;
-            }
+            previewBitmap = await previewTask;
         }
-        else
+        catch (TimeoutException)
         {
-            previewBitmap = initialPreview;
+            Console.WriteLine("Timed out waiting for a WGC frame.");
+            return 4;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Capture failed: {ex.GetType().Name}: {ex.Message}");
+            return 8;
         }
 
         RegionSelectionForm.RegionSelectionResult? selection = null;
         RunSta(() =>
         {
             using RegionSelectionForm form = new(previewBitmap);
-            if (initialPreview is not null)
-            {
-                form.Shown += (_, _) =>
-                {
-                    _ = previewTask.ContinueWith(t =>
-                    {
-                        if (!t.IsCompletedSuccessfully) return;
-                        Bitmap replacement = t.Result;
-                        try
-                        {
-                            if (form.IsDisposed || !form.IsHandleCreated)
-                            {
-                                replacement.Dispose();
-                                return;
-                            }
-
-                            form.BeginInvoke((Action)(() =>
-                            {
-                                if (form.IsDisposed)
-                                {
-                                    replacement.Dispose();
-                                    return;
-                                }
-
-                                form.ReplacePreview(replacement);
-                            }));
-                        }
-                        catch
-                        {
-                            replacement.Dispose();
-                        }
-                    }, TaskScheduler.Default);
-                };
-            }
             selection = form.ShowDialog() == DialogResult.OK
                 ? new RegionSelectionForm.RegionSelectionResult(
                     form.SelectedImageRegion,
@@ -1379,40 +1335,6 @@ internal static class Program
             Clipboard.SetDataObject(data, true, 5, 120);
         });
     }
-
-
-    private static Bitmap CreateInitialPreviewBitmap(int width, int height)
-    {
-        width = Math.Max(1, width);
-        height = Math.Max(1, height);
-        Bitmap bitmap = new(width, height, PixelFormat.Format32bppArgb);
-        bitmap.SetResolution(96.0f, 96.0f);
-        using Graphics graphics = Graphics.FromImage(bitmap);
-        graphics.Clear(Color.FromArgb(18, 20, 22));
-        try
-        {
-            System.Drawing.Rectangle bounds = Screen.PrimaryScreen?.Bounds ?? new System.Drawing.Rectangle(0, 0, width, height);
-            if (bounds.Width == width && bounds.Height == height)
-            {
-                graphics.CopyFromScreen(bounds.Location, System.Drawing.Point.Empty, bounds.Size);
-            }
-            else
-            {
-                using Bitmap screen = new(Math.Max(1, bounds.Width), Math.Max(1, bounds.Height), PixelFormat.Format32bppArgb);
-                using (Graphics screenGraphics = Graphics.FromImage(screen))
-                {
-                    screenGraphics.CopyFromScreen(bounds.Location, System.Drawing.Point.Empty, bounds.Size);
-                }
-                graphics.InterpolationMode = InterpolationMode.HighQualityBilinear;
-                graphics.DrawImage(screen, new System.Drawing.Rectangle(0, 0, width, height));
-            }
-        }
-        catch
-        {
-        }
-        return bitmap;
-    }
-
     private static ReadbackResult ApplySelectionEdits(ReadbackResult source, RegionSelectionForm.RegionSelectionResult selection)
     {
         if (selection.Preset == RegionSelectionForm.AdjustmentPreset.Balanced && selection.Operations.Count == 0)

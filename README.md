@@ -23,16 +23,16 @@ Install from the [Microsoft Store](https://apps.microsoft.com/detail/9nksvcpjl35
 Use the Windows x64 package:
 
 ```text
-HdrSdrBrightness-1.0.11-win64.zip
+HdrSdrBrightness-1.0.12-win64.zip
 ```
 
 Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no installer, no service, and no administrator privileges are required.
 
-### What's New In 1.0.11
+### What's New In 1.0.12
 
-- Reduces HDR screenshot cold-start latency by warming the capture helper shortly after the tray app starts.
-- Keeps the capture helper alive with the tray app so repeated screenshots no longer pay the .NET/WinForms startup cost.
-- Shows the region selection overlay immediately with a fast desktop preview while the HDR/WGC tone-mapped frame finishes in the background.
+- Fixes a region screenshot preview regression where the fast desktop placeholder could make HDR content look overexposed.
+- Region selection now waits for the real WGC/HDR tone-mapped preview before showing the crop overlay.
+- Keeps the capture helper warm with the tray app so repeated screenshots still avoid most .NET/WinForms startup cost.
 - Keeps the default screenshot shortcuts easy to discover: `Alt+S` for region capture and `Shift+Alt+S` for fullscreen capture.
 
 ![HDR screenshot capture workflow](image/README/hdr-screenshot-1.0.10.png)
@@ -217,16 +217,16 @@ SDR white level
 Windows x64 用户下载：
 
 ```text
-HdrSdrBrightness-1.0.11-win64.zip
+HdrSdrBrightness-1.0.12-win64.zip
 ```
 
 解压后运行 `HdrSdrBrightness.exe`。这是便携程序：不需要安装，不创建服务，也不需要管理员权限。
 
-### 1.0.11 更新内容
+### 1.0.12 更新内容
 
-- 降低 HDR 截图冷启动延迟：托盘程序启动后会提前预热截图 helper。
-- 截图 helper 会跟随托盘程序常驻，连续或间隔截图不再反复支付 .NET/WinForms 冷启动成本。
-- 区域截图会先用快速桌面预览立即显示框选界面，后台完成 HDR/WGC tone mapping 后再替换为 HDR 预览。
+- 修复区域截图预览回归：快速桌面占位预览可能让 HDR 内容看起来过曝。
+- 区域截图会先等待真实 WGC/HDR tone mapping 预览，再显示框选界面。
+- 截图 helper 仍会跟随托盘程序预热/常驻，连续或间隔截图继续避免大部分 .NET/WinForms 冷启动成本。
 - 默认截图快捷键保持清晰可见：`Alt+S` 为区域截图，`Shift+Alt+S` 为全屏截图。
 
 ![HDR 截图捕获流程](image/README/hdr-screenshot-1.0.10-zh.png)
