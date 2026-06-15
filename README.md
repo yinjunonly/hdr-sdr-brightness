@@ -23,12 +23,12 @@ Install from the [Microsoft Store](https://apps.microsoft.com/detail/9nksvcpjl35
 Use the Windows x64 package:
 
 ```text
-HdrSdrBrightness-1.0.12-win64.zip
+HdrSdrBrightness-1.0.13-win64.zip
 ```
 
 Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no installer, no service, and no administrator privileges are required.
 
-### What's New In 1.0.12
+### What's New In 1.0.13
 
 - Fixes a region screenshot preview regression where the fast desktop placeholder could make HDR content look overexposed.
 - Region selection now waits for the real WGC/HDR tone-mapped preview before showing the crop overlay.
@@ -217,12 +217,12 @@ SDR white level
 Windows x64 用户下载：
 
 ```text
-HdrSdrBrightness-1.0.12-win64.zip
+HdrSdrBrightness-1.0.13-win64.zip
 ```
 
 解压后运行 `HdrSdrBrightness.exe`。这是便携程序：不需要安装，不创建服务，也不需要管理员权限。
 
-### 1.0.12 更新内容
+### 1.0.13 更新内容
 
 - 修复区域截图预览回归：快速桌面占位预览可能让 HDR 内容看起来过曝。
 - 区域截图会先等待真实 WGC/HDR tone mapping 预览，再显示框选界面。
