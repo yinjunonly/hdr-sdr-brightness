@@ -62,7 +62,7 @@ HDR SDR Brightness is designed to feel simple in daily use: open it, choose comf
 
 The interface follows the Windows light or dark app theme automatically. Cards group related settings, sliders make brightness easy to compare, switches show on/off state clearly, and the SDR/HDR preview gives immediate visual feedback before you apply changes.
 
-Small interactions are kept responsive and restrained: buttons and controls react to the pointer with soft reveal highlights, dropdowns and brightness changes transition smoothly, and the Support author entry has a subtle motion cue without distracting from the main settings.
+Small interactions are kept responsive and restrained: buttons and controls react to the pointer with soft reveal highlights, dropdowns and brightness changes transition smoothly, and the Microsoft Store download badge has a subtle motion cue without distracting from the main settings.
 
 ### Recommended Defaults
 
@@ -98,17 +98,17 @@ Run `HdrSdrBrightness.exe` to open Settings and keep the app in the tray.
 
 Run `HdrSdrBrightness.exe --background` for tray-only startup. This is the mode used by Start with Windows.
 
-The tray menu includes Apply now, Capture HDR screenshot, Settings, Start with Windows, Display settings, Night Light settings, Windows HDR Calibration, Support author, and Exit.
+The tray menu includes Apply now, Capture HDR screenshot, Settings, Start with Windows, Display settings, Night Light settings, Windows HDR Calibration, Download from Microsoft Store, and Exit.
 
-### Support The Author
+### Download From Microsoft Store
 
-If this app improves your HDR setup, you can support development on Afdian:
+The GitHub release ZIP is free. If this app improves your HDR setup, downloading from Microsoft Store supports continued development and includes automatic updates:
 
 ```text
-https://afdian.com/a/injunaid/plan
+https://apps.microsoft.com/detail/9nksvcpjl35j?cid=github-readme
 ```
 
-Supporter codes only show a small local badge. They are optional and do not unlock features.
+Both builds provide the same core features.
 
 ### Background Performance
 
@@ -157,7 +157,7 @@ The Microsoft Store build uses the packaged Windows startup task and reflects th
 
 The app does not create a service and does not require administrator privileges. When Windows denies scheduled task creation in the portable build, the current-user Run entry remains the startup path.
 
-Supporter-code validation is local and offline.
+The portable build does not require accounts, services, or online activation.
 
 ### Source Code
 
@@ -256,7 +256,7 @@ HDR SDR 亮度助手的设计目标是日常使用足够简单：打开后设置
 
 界面会自动跟随 Windows 浅色或深色应用主题。卡片负责整理设置分区，滑块方便直观看到亮度差异，开关清楚表达开启/关闭状态，SDR/HDR 预览则让你在应用设置前先看到变化。
 
-交互效果尽量克制但有反馈：按钮和控件会跟随鼠标出现柔和高光，下拉菜单和亮度预览有平滑过渡，“支持作者”入口有轻微动态提示，但不会干扰主要设置。
+交互效果尽量克制但有反馈：按钮和控件会跟随鼠标出现柔和高光，下拉菜单和亮度预览有平滑过渡，Microsoft Store 下载徽章有轻微动态提示，但不会干扰主要设置。
 
 ### 推荐默认值
 
@@ -292,17 +292,17 @@ https://apps.microsoft.com/detail/9n7f2sm5d1lr?hl=zh-CN&gl=US
 
 运行 `HdrSdrBrightness.exe --background` 会只进入托盘；开机自启使用这个模式。
 
-托盘菜单包含：立即应用、截取 HDR 截图、设置、开机自启、打开显示设置、打开夜间模式设置、Windows HDR Calibration、支持作者、退出。
+托盘菜单包含：立即应用、截取 HDR 截图、设置、开机自启、打开显示设置、打开夜间模式设置、Windows HDR Calibration、从 Microsoft Store 下载、退出。
 
-### 支持作者
+### 从 Microsoft Store 下载
 
-如果这个工具改善了你的 HDR 使用体验，可以通过爱发电支持作者：
+GitHub Release ZIP 是免费的。如果这个工具帮到了你，从 Microsoft Store 下载可以支持后续开发，并获得自动更新：
 
 ```text
-https://afdian.com/a/injunaid/plan
+https://apps.microsoft.com/detail/9nksvcpjl35j?cid=github-readme
 ```
 
-支持者码只会显示一个本地小徽章，是可选的，不会解锁功能，也不影响正常使用。
+两个版本提供相同的核心功能。
 
 ### 后台性能
 
@@ -351,7 +351,7 @@ Microsoft Store 版使用 Windows 打包启动任务，并会从 Windows 设置 
 
 程序不创建服务，也不需要管理员权限。如果便携版遇到 Windows 拒绝创建计划任务，会继续使用当前用户 Run 项作为启动方式。
 
-支持者码为本地离线校验。
+便携版不需要账号、服务或在线激活。
 
 ### 源代码
 

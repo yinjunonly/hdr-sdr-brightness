@@ -64,6 +64,9 @@ const int kSettingsCardTopPadding = 16;
 const int kSettingsRightControlWidth = 220;
 const int kAnimationSlotCount = 800;
 const int kPillControlRadius = 16;
+const int kStoreSupportButtonW = 168;
+const int kStoreSupportButtonH = 54;
+const int kStoreSupportButtonY = 22;
 const size_t kSupporterCodeMaxLength = 20;
 
 const UINT kMenuApply = 1001;
@@ -98,7 +101,7 @@ const int kIdSupportActivate = 2021;
 const int kIdSupportCode = 2023;
 const int kIdSupportStatus = 2024;
 
-const wchar_t kDonationUrl[] = L"https://afdian.com/a/injunaid/plan";
+const wchar_t kStoreSupportUrl[] = L"https://apps.microsoft.com/detail/9nksvcpjl35j?cid=github-build";
 const wchar_t kGithubUrl[] = L"https://github.com/yinjunonly/hdr-sdr-brightness";
 const wchar_t kHdrCalibrationStoreUri[] = L"ms-windows-store://pdp/?ProductId=9N7F2SM5D1LR";
 const wchar_t kHdrCalibrationWebUrl[] = L"https://apps.microsoft.com/detail/9n7f2sm5d1lr";
@@ -1104,15 +1107,32 @@ bool IsValidSupporterCode(const std::wstring& value) {
 }
 
 bool HasSupporterBadge() {
-    return IsSupportFeatureAvailable() && IsValidSupporterCode(g_config.supporterCode);
+    return false;
 }
 
 int SupportButtonWidth(HDC dc) {
-    return ClampInt(TextWidthLogical(dc, T(TxtSupportAuthor), g_smallFont) + 58, 108, 154);
+    UNREFERENCED_PARAMETER(dc);
+    return kStoreSupportButtonW;
 }
 
 int SupportButtonLeft(HDC dc) {
     return 28 + 584 - kSettingsCardPadding - SupportButtonWidth(dc);
+}
+
+TextId StoreBubbleTextId() {
+    switch ((g_supportButtonAnim / 40) % 3) {
+    case 1:
+        return TxtStoreBubbleUpdates;
+    case 2:
+        return TxtStoreBubbleSupport;
+    case 0:
+    default:
+        return TxtStoreBubbleDownload;
+    }
+}
+
+int StoreBubbleMode() {
+    return (g_supportButtonAnim / 40) % 3;
 }
 
 int SupporterBadgeWidth(HDC dc) {
@@ -3105,7 +3125,10 @@ bool UpdateSettingsAnimations(HWND hwnd) {
                        !g_settingsInfoDialogOpen && !g_hotkeyDialogOpen && !IsIconic(hwnd);
     if (supportLoop) {
         g_supportButtonAnim = (g_supportButtonAnim + 1) % 120;
-        RECT supportRect = UiBox(442, kSettingsTitleBarHeight + 12, 174, 54);
+        RECT supportRect = UiBox(SupportButtonLeft(NULL) - 4,
+                                 kSettingsTitleBarHeight + kStoreSupportButtonY - 4,
+                                 kStoreSupportButtonW + 8,
+                                 kStoreSupportButtonH + 8);
         InvalidateRect(hwnd, &supportRect, FALSE);
     }
 
@@ -3715,10 +3738,14 @@ int HitTestSettingsTopControl(POINT pt) {
 
     pt = SettingsViewportPoint(pt);
     if (pt.y < 0) return HoverNone;
-    const int supportMaxW = 154;
+    const int supportMaxW = kStoreSupportButtonW;
     const int supportX = 28 + 584 - kSettingsCardPadding - supportMaxW;
+    const int supportHitW = 168;
     if (HasSupporterBadge() && PtInUiBox(pt, supportX, 28, supportMaxW, 32)) return HoverSupporterBadge;
-    if (!HasSupporterBadge() && PtInUiBox(pt, supportX, 30, supportMaxW, 28)) return HoverSupport;
+    if (!HasSupporterBadge() &&
+        PtInUiBox(pt, supportX, kStoreSupportButtonY, supportHitW, kStoreSupportButtonH)) {
+        return HoverSupport;
+    }
     return HoverNone;
 }
 
@@ -5340,64 +5367,147 @@ void DrawDialogButton(HDC dc, int x, int y, int w, const wchar_t* text, int cont
     DrawTextLine(dc, text, rect, g_sectionFont, Rgb(255, 255, 255), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
-void DrawCoffeeIcon(HDC dc, int x, int y, COLORREF color, int steamPhase) {
+void DrawWindowsLogoIcon(HDC dc, int x, int y) {
     Gdiplus::Graphics graphics(dc);
     graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
     graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
 
-    COLORREF steamColor = BlendColor(color, g_theme.window, 28);
-    Gdiplus::Pen steamPen(GdiColor(steamColor), 1.15f);
-    int rise = MulDiv(steamPhase % 40, 7, 40);
-    int sway = ((steamPhase / 8) % 2 == 0) ? 1 : -1;
-    graphics.DrawBezier(&steamPen,
-                        Ui(x + 4), Ui(y + 4 - rise),
-                        Ui(x + 1 + sway), Ui(y + 1 - rise),
-                        Ui(x + 7 - sway), Ui(y - 1 - rise),
-                        Ui(x + 4), Ui(y - 5 - rise));
-    graphics.DrawBezier(&steamPen,
-                        Ui(x + 10), Ui(y + 4 - ((rise + 3) % 7)),
-                        Ui(x + 13 - sway), Ui(y + 1 - ((rise + 3) % 7)),
-                        Ui(x + 7 + sway), Ui(y - 1 - ((rise + 3) % 7)),
-                        Ui(x + 10), Ui(y - 5 - ((rise + 3) % 7)));
+    const int tile = 8;
+    const int gap = 2;
+    Gdiplus::SolidBrush red(GdiColor(Rgb(242, 80, 34)));
+    Gdiplus::SolidBrush green(GdiColor(Rgb(127, 186, 0)));
+    Gdiplus::SolidBrush blue(GdiColor(Rgb(0, 164, 239)));
+    Gdiplus::SolidBrush yellow(GdiColor(Rgb(255, 185, 0)));
+    graphics.FillRectangle(&red, Ui(x), Ui(y), Ui(tile), Ui(tile));
+    graphics.FillRectangle(&green, Ui(x + tile + gap), Ui(y), Ui(tile), Ui(tile));
+    graphics.FillRectangle(&blue, Ui(x), Ui(y + tile + gap), Ui(tile), Ui(tile));
+    graphics.FillRectangle(&yellow, Ui(x + tile + gap), Ui(y + tile + gap), Ui(tile), Ui(tile));
+}
 
-    Gdiplus::Pen pen(GdiColor(color), 1.55f);
-    Gdiplus::SolidBrush coffeeBrush(GdiColor(BlendColor(color, g_theme.window, 38)));
-    Gdiplus::GraphicsPath cup;
-    AddRoundedRectPath(&cup,
-                       static_cast<Gdiplus::REAL>(Ui(x)),
-                       static_cast<Gdiplus::REAL>(Ui(y + 8)),
-                       static_cast<Gdiplus::REAL>(Ui(15)),
-                       static_cast<Gdiplus::REAL>(Ui(10)),
-                       static_cast<Gdiplus::REAL>(Ui(3)));
-    graphics.DrawPath(&pen, &cup);
-    graphics.FillEllipse(&coffeeBrush,
-                         static_cast<Gdiplus::REAL>(Ui(x + 2)),
-                         static_cast<Gdiplus::REAL>(Ui(y + 9)),
-                         static_cast<Gdiplus::REAL>(Ui(11)),
-                         static_cast<Gdiplus::REAL>(Ui(3)));
-    graphics.DrawArc(&pen,
-                     static_cast<Gdiplus::REAL>(Ui(x + 12)),
-                     static_cast<Gdiplus::REAL>(Ui(y + 10)),
-                     static_cast<Gdiplus::REAL>(Ui(8)),
-                     static_cast<Gdiplus::REAL>(Ui(7)),
-                     -78.0f, 156.0f);
-    graphics.DrawLine(&pen, Ui(x - 1), Ui(y + 21), Ui(x + 18), Ui(y + 21));
+void DrawPixelCapsuleBubble(HDC dc, int x, int y, int w, int h,
+                            COLORREF fill, COLORREF border, COLORREF highlight, COLORREF shadow,
+                            int tailCenterX) {
+    DrawSolidLogicalRect(dc, x + 2, y + 3, w, h - 1, shadow);
+
+    DrawSolidLogicalRect(dc, x + 7, y, w - 14, 1, highlight);
+    DrawSolidLogicalRect(dc, x + 4, y + 1, w - 8, 1, border);
+    DrawSolidLogicalRect(dc, x + 2, y + 2, w - 4, 2, border);
+    DrawSolidLogicalRect(dc, x, y + 6, 2, h - 12, border);
+    DrawSolidLogicalRect(dc, x + w - 2, y + 6, 2, h - 12, border);
+    DrawSolidLogicalRect(dc, x + 2, y + h - 4, w - 4, 2, border);
+    DrawSolidLogicalRect(dc, x + 4, y + h - 2, w - 8, 1, border);
+
+    DrawSolidLogicalRect(dc, x + 4, y + 4, w - 8, h - 8, fill);
+    DrawSolidLogicalRect(dc, x + 2, y + 6, w - 4, h - 12, fill);
+    DrawSolidLogicalRect(dc, x + 8, y + 3, w - 16, 1, highlight);
+    DrawSolidLogicalRect(dc, x + 3, y + 7, 1, h - 14, highlight);
+    DrawSolidLogicalRect(dc, x + 8, y + h - 6, w - 16, 1, BlendColor(fill, border, 28));
+    DrawSolidLogicalRect(dc, x + w - 5, y + 7, 1, h - 14, BlendColor(fill, border, 24));
+    DrawSolidLogicalRect(dc, x + 5, y + 5, 2, 2, highlight);
+    DrawSolidLogicalRect(dc, x + w - 8, y + h - 7, 2, 2, border);
+
+    const int tailY = y + h - 1;
+    DrawSolidLogicalRect(dc, tailCenterX - 5, tailY - 1, 10, 2, border);
+    DrawSolidLogicalRect(dc, tailCenterX - 3, tailY + 1, 6, 2, border);
+    DrawSolidLogicalRect(dc, tailCenterX - 1, tailY + 3, 2, 2, border);
+    DrawSolidLogicalRect(dc, tailCenterX - 3, tailY - 1, 6, 2, fill);
+    DrawSolidLogicalRect(dc, tailCenterX - 1, tailY + 1, 2, 2, fill);
+}
+
+void DrawPixelStoreBadge(HDC dc, int x, int y, bool pressed, COLORREF fill, COLORREF border) {
+    const int offset = pressed ? 1 : 0;
+    DrawSolidLogicalRect(dc, x + 2, y + 3, 24, 24, Rgb(0, 0, 0));
+    DrawSolidLogicalRect(dc, x + offset + 2, y + offset, 20, 1, border);
+    DrawSolidLogicalRect(dc, x + offset + 1, y + offset + 1, 22, 1, border);
+    DrawSolidLogicalRect(dc, x + offset, y + offset + 3, 1, 18, border);
+    DrawSolidLogicalRect(dc, x + offset + 23, y + offset + 3, 1, 18, border);
+    DrawSolidLogicalRect(dc, x + offset + 1, y + offset + 22, 22, 1, border);
+    DrawSolidLogicalRect(dc, x + offset + 2, y + offset + 2, 20, 20, fill);
+    DrawWindowsLogoIcon(dc, x + offset + 3, y + offset + 3);
+}
+
+void DrawPixelBubbleEmoji(HDC dc, int x, int y, int mode) {
+    COLORREF outline = Rgb(2, 6, 10);
+    if (mode == 1) {
+        COLORREF yellow = Rgb(250, 204, 21);
+        COLORREF orange = Rgb(245, 158, 11);
+        DrawSolidLogicalRect(dc, x + 6, y, 4, 5, outline);
+        DrawSolidLogicalRect(dc, x + 4, y + 4, 7, 4, outline);
+        DrawSolidLogicalRect(dc, x + 2, y + 8, 7, 3, outline);
+        DrawSolidLogicalRect(dc, x + 5, y + 10, 4, 5, outline);
+        DrawSolidLogicalRect(dc, x + 7, y + 1, 2, 4, yellow);
+        DrawSolidLogicalRect(dc, x + 5, y + 5, 5, 2, yellow);
+        DrawSolidLogicalRect(dc, x + 3, y + 8, 5, 2, orange);
+        DrawSolidLogicalRect(dc, x + 6, y + 10, 2, 4, orange);
+        DrawSolidLogicalRect(dc, x + 10, y + 7, 3, 2, yellow);
+        DrawSolidLogicalRect(dc, x + 1, y + 1, 2, 2, Rgb(255, 244, 179));
+        return;
+    }
+
+    if (mode == 2) {
+        COLORREF red = Rgb(239, 68, 68);
+        COLORREF deep = Rgb(185, 28, 28);
+        COLORREF shine = Rgb(254, 202, 202);
+        DrawSolidLogicalRect(dc, x + 2, y + 1, 4, 3, outline);
+        DrawSolidLogicalRect(dc, x + 9, y + 1, 4, 3, outline);
+        DrawSolidLogicalRect(dc, x + 1, y + 4, 13, 4, outline);
+        DrawSolidLogicalRect(dc, x + 2, y + 8, 11, 3, outline);
+        DrawSolidLogicalRect(dc, x + 4, y + 11, 7, 3, outline);
+        DrawSolidLogicalRect(dc, x + 6, y + 14, 3, 1, outline);
+        DrawSolidLogicalRect(dc, x + 3, y + 2, 2, 2, red);
+        DrawSolidLogicalRect(dc, x + 10, y + 2, 2, 2, red);
+        DrawSolidLogicalRect(dc, x + 2, y + 5, 11, 2, red);
+        DrawSolidLogicalRect(dc, x + 3, y + 8, 9, 2, red);
+        DrawSolidLogicalRect(dc, x + 5, y + 11, 5, 2, deep);
+        DrawSolidLogicalRect(dc, x + 7, y + 13, 1, 1, deep);
+        DrawSolidLogicalRect(dc, x + 3, y + 4, 2, 1, shine);
+        return;
+    }
+
+    COLORREF gem = Rgb(45, 212, 191);
+    COLORREF gemDark = Rgb(13, 148, 136);
+    COLORREF gemLight = Rgb(153, 246, 228);
+    DrawSolidLogicalRect(dc, x + 5, y, 5, 2, outline);
+    DrawSolidLogicalRect(dc, x + 3, y + 2, 9, 2, outline);
+    DrawSolidLogicalRect(dc, x + 2, y + 4, 11, 6, outline);
+    DrawSolidLogicalRect(dc, x + 4, y + 10, 7, 3, outline);
+    DrawSolidLogicalRect(dc, x + 6, y + 13, 3, 2, outline);
+    DrawSolidLogicalRect(dc, x + 6, y + 1, 3, 1, gemLight);
+    DrawSolidLogicalRect(dc, x + 4, y + 3, 7, 1, gemLight);
+    DrawSolidLogicalRect(dc, x + 3, y + 5, 9, 4, gem);
+    DrawSolidLogicalRect(dc, x + 5, y + 9, 5, 2, gem);
+    DrawSolidLogicalRect(dc, x + 7, y + 11, 1, 2, gemDark);
+    DrawSolidLogicalRect(dc, x + 9, y + 5, 2, 4, gemDark);
 }
 
 void DrawSupportButton(HDC dc, int x, int y) {
     int amount = std::max(InteractionPercent(HoverSupport), IsHover(HoverSupport) ? 1 : 0);
     bool pressed = g_pressedControl == HoverSupport;
-    int w = SupportButtonWidth(dc);
-    COLORREF fill = BlendColor(g_theme.window, g_theme.control, 82 + amount / 10);
-    COLORREF border = BlendColor(fill, g_theme.controlBorderHover, 34 + amount / 3);
-    COLORREF text = BlendColor(g_theme.text, g_theme.mutedText, 28);
-    if (pressed) fill = BlendColor(fill, Rgb(0, 0, 0), g_theme.dark ? 12 : 5);
+    UNREFERENCED_PARAMETER(dc);
+    const int bubbleW = 168;
+    const int bubbleH = 24;
+    const int iconX = x + bubbleW - 30;
+    const int iconY = y + bubbleH + 4;
+    const int pressOffset = pressed ? 1 : 0;
+    COLORREF bubbleFill = g_theme.dark ? Rgb(20, 48, 35) : Rgb(252, 246, 219);
+    COLORREF bubbleBorder = g_theme.dark ? Rgb(218, 179, 84) : Rgb(122, 83, 34);
+    COLORREF bubbleHighlight = g_theme.dark ? Rgb(255, 236, 166) : Rgb(255, 249, 220);
+    COLORREF bubbleShadow = g_theme.dark ? Rgb(4, 12, 9) : Rgb(166, 130, 75);
+    COLORREF text = g_theme.dark ? Rgb(255, 244, 204) : Rgb(54, 38, 18);
+    COLORREF iconFill = g_theme.dark ? Rgb(18, 38, 30) : Rgb(255, 250, 230);
+    COLORREF iconBorder = BlendColor(bubbleBorder, g_theme.primary, amount / 4);
 
-    DrawLiquidGlassPanel(dc, x, y, w, 28, 14, fill, border, HoverSupport);
-    DrawCoffeeIcon(dc, x + 12, y + 1 + (pressed ? 1 : 0), text, g_supportButtonAnim);
-    RECT rect = UiBox(x + 48, y + (pressed ? 1 : 0), w - 58, 28);
-    DrawTextLine(dc, T(TxtSupportAuthor), rect, g_smallFont, text,
-                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    DrawPixelCapsuleBubble(dc, x, y + pressOffset, bubbleW, bubbleH,
+                           bubbleFill, bubbleBorder, bubbleHighlight, bubbleShadow,
+                           iconX + 12);
+
+    DrawPixelBubbleEmoji(dc, x + 8, y + pressOffset + 5, StoreBubbleMode());
+
+    RECT rect = UiBox(x + 30, y + pressOffset, bubbleW - 42, bubbleH);
+    DrawTextLine(dc, T(StoreBubbleTextId()), rect, g_smallFont, text,
+                 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    DrawPixelStoreBadge(dc, iconX, iconY, pressed, iconFill, iconBorder);
 }
 
 int TextWidthLogical(HDC dc, const wchar_t* text, HFONT font) {
@@ -6161,6 +6271,9 @@ void DrawSupportWindowChrome(HWND hwnd, HDC dc) {
                      IsHover(HoverSupportActivate), HoverSupportActivate);
 }
 
+#if defined(__GNUC__)
+LRESULT CALLBACK SupportWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) __attribute__((unused));
+#endif
 LRESULT CALLBACK SupportWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_CREATE: {
@@ -6242,7 +6355,7 @@ LRESULT CALLBACK SupportWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
             InvalidateRect(hwnd, NULL, FALSE);
             if (pressed == released) {
                 if (pressed == HoverSupportDonate) {
-                    ShellExecuteW(hwnd, L"open", kDonationUrl, NULL, NULL, SW_SHOWNORMAL);
+                    ShellExecuteW(hwnd, L"open", kStoreSupportUrl, NULL, NULL, SW_SHOWNORMAL);
                 } else if (pressed == HoverSupportActivate) {
                     ActivateSupporterCode(hwnd);
                 }
@@ -6367,48 +6480,7 @@ LRESULT CALLBACK SupportWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
 
 void ShowSupportWindow(HWND owner) {
     if (!IsSupportFeatureAvailable()) return;
-
-    if (g_supportWindow) {
-        SetForegroundWindow(g_supportWindow);
-        return;
-    }
-
-    WNDCLASSEXW wc = {};
-    wc.cbSize = sizeof(wc);
-    wc.lpfnWndProc = SupportWndProc;
-    wc.hInstance = g_instance;
-    wc.hIcon = LoadIconW(g_instance, MAKEINTRESOURCEW(IDI_APPICON));
-    if (!wc.hIcon) wc.hIcon = LoadIconW(NULL, IDI_APPLICATION);
-    wc.hIconSm = wc.hIcon;
-    wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
-    wc.hbrBackground = NULL;
-    wc.lpszClassName = L"HdrSdrBrightnessSupportWindow";
-
-    if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
-        return;
-    }
-
-    RefreshUiDpiForNewTopLevelWindow(owner ? owner : g_mainWindow);
-    EnsureUiResources();
-    DWORD style = WS_CAPTION | WS_SYSMENU;
-    DWORD exStyle = WS_EX_DLGMODALFRAME;
-    SIZE windowSize = WindowSizeForClient(style, exStyle, Ui(468), Ui(244));
-
-    g_supportOwnerWindow = owner;
-    HWND parent = g_mainWindow;
-    g_supportWindow = CreateWindowExW(exStyle, wc.lpszClassName, T(TxtSupportAuthor),
-                                      style,
-                                      CW_USEDEFAULT, CW_USEDEFAULT,
-                                      windowSize.cx, windowSize.cy,
-                                      parent, NULL, g_instance, NULL);
-    if (!g_supportWindow) return;
-
-    RefreshUiDpi(g_supportWindow);
-    windowSize = WindowSizeForClient(style, exStyle, Ui(468), Ui(244));
-    CenterWindow(g_supportWindow, windowSize.cx, windowSize.cy);
-    ShowWindow(g_supportWindow, SW_SHOW);
-    SetForegroundWindow(g_supportWindow);
-    UpdateWindow(g_supportWindow);
+    ShellExecuteW(owner ? owner : g_mainWindow, L"open", kStoreSupportUrl, NULL, NULL, SW_SHOWNORMAL);
 }
 
 void DrawHeroCard(HDC dc, const SettingsLayout& layout) {
@@ -6522,8 +6594,7 @@ void DrawSettingsChrome(HWND hwnd, HDC dc) {
     DeleteObject(contentClip);
 
     DrawAppMark(dc, layout.headerIconX, layout.headerIconY);
-    RECT title = UiBox(layout.headerTitleX, layout.headerTitleY,
-                       IsSupportFeatureAvailable() ? 350 : 500, 30);
+    RECT title = UiBox(layout.headerTitleX, layout.headerTitleY, 500, 30);
     DrawTextLine(dc, T(TxtDisplayName), title, g_titleFont, g_theme.titleText,
                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
@@ -6534,7 +6605,7 @@ void DrawSettingsChrome(HWND hwnd, HDC dc) {
         if (HasSupporterBadge()) {
             DrawSupporterBadge(dc, SupporterBadgeLeft(dc), 29);
         } else {
-            DrawSupportButton(dc, SupportButtonLeft(dc), 30);
+            DrawSupportButton(dc, SupportButtonLeft(dc), kStoreSupportButtonY);
         }
     }
 
