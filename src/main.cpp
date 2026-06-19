@@ -44,6 +44,7 @@ const int IDI_APPICON = 101;
 const UINT kTrayMessage = WM_APP + 1;
 const UINT kApplyMessage = WM_APP + 2;
 const UINT kRegistryChangedMessage = WM_APP + 3;
+const UINT kStoreLicenseExpiredMessage = WM_APP + 4;
 const UINT_PTR kRecheckTimer = 1;
 const UINT_PTR kTransitionTimer = 2;
 const UINT_PTR kSettingsAnimationTimer = 3;
@@ -81,7 +82,7 @@ const UINT kMenuHdrScreenshot = 1009;
 
 const int kHotkeyIdScreenshot = 1;
 const int kHotkeyIdFullscreen = 2;
-const UINT kFullscreenDoneMessage = WM_APP + 4;
+const UINT kFullscreenDoneMessage = WM_APP + 5;
 
 const int kIdDayBrightness = 2001;
 const int kIdNightBrightness = 2002;
@@ -684,6 +685,18 @@ std::wstring QuoteCommandLineArgument(const std::wstring& value) {
     return quoted;
 }
 
+std::wstring QuotePowerShellString(const std::wstring& value) {
+    std::wstring quoted;
+    quoted.reserve(value.size() + 2);
+    quoted.push_back(L'\'');
+    for (size_t i = 0; i < value.size(); ++i) {
+        if (value[i] == L'\'') quoted.push_back(L'\'');
+        quoted.push_back(value[i]);
+    }
+    quoted.push_back(L'\'');
+    return quoted;
+}
+
 std::wstring DirectoryFromPath(const std::wstring& path) {
     size_t pos = path.find_last_of(L"\\/");
     if (pos == std::wstring::npos) return L"";
@@ -869,6 +882,20 @@ bool IsStoreLicenseExplicitlyInactive() {
     }
 
     return exitCode == 2;
+}
+
+static DWORD WINAPI StoreLicenseCheckThread(LPVOID param) {
+    HWND hwnd = reinterpret_cast<HWND>(param);
+    if (hwnd && IsStoreLicenseExplicitlyInactive()) {
+        PostMessageW(hwnd, kStoreLicenseExpiredMessage, 0, 0);
+    }
+    return 0;
+}
+
+void StartStoreLicenseCheckThread(HWND hwnd) {
+    if (!UseStoreStartupIntegration() || !hwnd) return;
+    HANDLE thread = CreateThread(NULL, 0, StoreLicenseCheckThread, hwnd, 0, NULL);
+    if (thread) CloseHandle(thread);
 }
 
 void DisableStoreStartupAfterLicenseExpired() {
@@ -1579,7 +1606,15 @@ bool DeleteScheduledTaskStartup() {
 
     if (!IsScheduledTaskStartupEnabled()) return true;
     std::wstring command = L"schtasks.exe /Delete /TN " + QuoteCommandLineArgument(kStartupTaskName) + L" /F";
-    return RunHiddenCommand(command, 5000);
+    if (RunHiddenCommand(command, 5000)) return true;
+
+    std::wstring script =
+        L"Unregister-ScheduledTask -TaskName " + QuotePowerShellString(kStartupTaskName) +
+        L" -Confirm:$false -ErrorAction SilentlyContinue";
+    std::wstring powershell =
+        L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command " +
+        QuoteCommandLineArgument(script);
+    return RunHiddenCommand(powershell, 10000);
 }
 
 bool SetScheduledTaskStartupEnabled(bool enabled) {
@@ -1592,7 +1627,23 @@ bool SetScheduledTaskStartupEnabled(bool enabled) {
         L"schtasks.exe /Create /TN " + QuoteCommandLineArgument(kStartupTaskName) +
         L" /SC ONLOGON /TR " + QuoteCommandLineArgument(action) +
         L" /RL LIMITED /F";
-    return RunHiddenCommand(command, 5000);
+    if (RunHiddenCommand(command, 5000)) return true;
+
+    std::wstring script =
+        L"$ErrorActionPreference='Stop';"
+        L"$user=[System.Security.Principal.WindowsIdentity]::GetCurrent().Name;"
+        L"$action=New-ScheduledTaskAction -Execute " + QuotePowerShellString(GetExePath()) +
+        L" -Argument '--background';"
+        L"$trigger=New-ScheduledTaskTrigger -AtLogOn -User $user;"
+        L"$principal=New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited;"
+        L"$settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries "
+        L"-ExecutionTimeLimit (New-TimeSpan -Seconds 0);"
+        L"Register-ScheduledTask -TaskName " + QuotePowerShellString(kStartupTaskName) +
+        L" -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null";
+    std::wstring powershell =
+        L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command " +
+        QuoteCommandLineArgument(script);
+    return RunHiddenCommand(powershell, 15000);
 }
 
 bool IsStartupEnabled() {
@@ -1761,6 +1812,19 @@ bool TrySetStartupEnabled(bool enabled) {
         SetRunKeyStartupEnabled(false);
     }
     return IsStartupEnabled() == enabled;
+}
+
+static DWORD WINAPI PortableStartupRepairThread(LPVOID) {
+    if (!UseStoreStartupIntegration() && g_config.startWithWindows && !IsScheduledTaskStartupEnabled()) {
+        SetScheduledTaskStartupEnabled(true);
+    }
+    return 0;
+}
+
+void StartPortableStartupRepairThread() {
+    if (UseStoreStartupIntegration() || !g_config.startWithWindows || IsScheduledTaskStartupEnabled()) return;
+    HANDLE thread = CreateThread(NULL, 0, PortableStartupRepairThread, NULL, 0, NULL);
+    if (thread) CloseHandle(thread);
 }
 
 void LoadConfig(bool refreshStartupState = false) {
@@ -7591,6 +7655,10 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
                                  NotificationActionDefault);
         }
         return 0;
+    case kStoreLicenseExpiredMessage:
+        DisableStoreStartupAfterLicenseExpired();
+        DestroyWindow(hwnd);
+        return 0;
     case kTrayMessage:
         if (LOWORD(lParam) == NIN_BALLOONUSERCLICK) {
             ShowLastNotificationDialog();
@@ -7680,10 +7748,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int) {
     g_taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
 
     LoadConfig(false);
-    if (backgroundLaunch && IsStoreLicenseExplicitlyInactive()) {
-        DisableStoreStartupAfterLicenseExpired();
-        return 0;
-    }
 
     HANDLE mutex = CreateMutexW(NULL, TRUE, L"Local\\OledHdrSdrSyncMutex");
     if (!mutex) {
@@ -7702,6 +7766,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int) {
         return 1;
     }
     RegisterAppHotkeys();
+    StartPortableStartupRepairThread();
+    if (backgroundLaunch) {
+        StartStoreLicenseCheckThread(g_mainWindow);
+    }
 
     if (openSettingsOnLaunch) {
         PostMessageW(g_mainWindow, WM_COMMAND, MAKEWPARAM(kMenuSettings, 0), 0);

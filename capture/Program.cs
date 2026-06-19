@@ -477,8 +477,8 @@ internal static class Program
             CaptureString.ToolbarPen => "Pen annotation",
             CaptureString.ToolbarMosaic => "Mosaic",
             CaptureString.ToolbarColor => "Change annotation color",
-            CaptureString.ToolbarUndo => "Undo",
-            CaptureString.ToolbarRedo => "Redo",
+            CaptureString.ToolbarUndo => "Undo (Ctrl+Z)",
+            CaptureString.ToolbarRedo => "Redo (Ctrl+Y)",
             CaptureString.ToolbarReset => "Reset",
             CaptureString.ToolbarHdrLow => "HDR brightness: Low",
             CaptureString.ToolbarHdrBalanced => "HDR brightness: Balanced",
@@ -528,8 +528,8 @@ internal static class Program
             CaptureString.ToolbarPen => "画笔标注",
             CaptureString.ToolbarMosaic => "马赛克遮挡",
             CaptureString.ToolbarColor => "切换标注颜色",
-            CaptureString.ToolbarUndo => "撤销",
-            CaptureString.ToolbarRedo => "重做",
+            CaptureString.ToolbarUndo => "撤销 (Ctrl+Z)",
+            CaptureString.ToolbarRedo => "重做 (Ctrl+Y)",
             CaptureString.ToolbarReset => "重置",
             CaptureString.ToolbarHdrLow => "HDR 亮度：低",
             CaptureString.ToolbarHdrBalanced => "HDR 亮度：平衡",
@@ -579,8 +579,8 @@ internal static class Program
             CaptureString.ToolbarPen => "畫筆標註",
             CaptureString.ToolbarMosaic => "馬賽克遮蔽",
             CaptureString.ToolbarColor => "切換標註顏色",
-            CaptureString.ToolbarUndo => "復原",
-            CaptureString.ToolbarRedo => "重做",
+            CaptureString.ToolbarUndo => "復原 (Ctrl+Z)",
+            CaptureString.ToolbarRedo => "重做 (Ctrl+Y)",
             CaptureString.ToolbarReset => "重設",
             CaptureString.ToolbarHdrLow => "HDR 亮度：低",
             CaptureString.ToolbarHdrBalanced => "HDR 亮度：平衡",
@@ -630,8 +630,8 @@ internal static class Program
             CaptureString.ToolbarPen => "펜 주석",
             CaptureString.ToolbarMosaic => "모자이크",
             CaptureString.ToolbarColor => "주석 색 변경",
-            CaptureString.ToolbarUndo => "실행 취소",
-            CaptureString.ToolbarRedo => "다시 실행",
+            CaptureString.ToolbarUndo => "실행 취소 (Ctrl+Z)",
+            CaptureString.ToolbarRedo => "다시 실행 (Ctrl+Y)",
             CaptureString.ToolbarReset => "초기화",
             CaptureString.ToolbarHdrLow => "HDR 밝기: 낮음",
             CaptureString.ToolbarHdrBalanced => "HDR 밝기: 균형",
@@ -681,8 +681,8 @@ internal static class Program
             CaptureString.ToolbarPen => "ペン注釈",
             CaptureString.ToolbarMosaic => "モザイク",
             CaptureString.ToolbarColor => "注釈の色を変更",
-            CaptureString.ToolbarUndo => "元に戻す",
-            CaptureString.ToolbarRedo => "やり直し",
+            CaptureString.ToolbarUndo => "元に戻す (Ctrl+Z)",
+            CaptureString.ToolbarRedo => "やり直し (Ctrl+Y)",
             CaptureString.ToolbarReset => "リセット",
             CaptureString.ToolbarHdrLow => "HDR 明るさ: 低",
             CaptureString.ToolbarHdrBalanced => "HDR 明るさ: バランス",
@@ -732,8 +732,8 @@ internal static class Program
             CaptureString.ToolbarPen => "Перо",
             CaptureString.ToolbarMosaic => "Мозаика",
             CaptureString.ToolbarColor => "Изменить цвет пометки",
-            CaptureString.ToolbarUndo => "Отменить",
-            CaptureString.ToolbarRedo => "Повторить",
+            CaptureString.ToolbarUndo => "Отменить (Ctrl+Z)",
+            CaptureString.ToolbarRedo => "Повторить (Ctrl+Y)",
             CaptureString.ToolbarReset => "Сброс",
             CaptureString.ToolbarHdrLow => "Яркость HDR: низкая",
             CaptureString.ToolbarHdrBalanced => "Яркость HDR: баланс",
@@ -783,8 +783,8 @@ internal static class Program
             CaptureString.ToolbarPen => "Stiftmarkierung",
             CaptureString.ToolbarMosaic => "Mosaik",
             CaptureString.ToolbarColor => "Markierungsfarbe ändern",
-            CaptureString.ToolbarUndo => "Rückgängig",
-            CaptureString.ToolbarRedo => "Wiederholen",
+            CaptureString.ToolbarUndo => "Rückgängig (Ctrl+Z)",
+            CaptureString.ToolbarRedo => "Wiederholen (Ctrl+Y)",
             CaptureString.ToolbarReset => "Zurücksetzen",
             CaptureString.ToolbarHdrLow => "HDR-Helligkeit: niedrig",
             CaptureString.ToolbarHdrBalanced => "HDR-Helligkeit: ausgewogen",
@@ -2788,6 +2788,20 @@ internal static class Program
 
         protected override void OnKeyDown(KeyEventArgs e)
         {
+            if (e.Control && e.KeyCode == Keys.Z)
+            {
+                UndoLastEdit();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                return;
+            }
+            if (e.Control && e.KeyCode == Keys.Y)
+            {
+                RedoLastEdit();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                return;
+            }
             if (e.KeyCode == Keys.Escape) Close();
             base.OnKeyDown(e);
         }
@@ -4743,6 +4757,20 @@ internal static class Program
         protected override void OnKeyDown(KeyEventArgs e)
         {
             if (!mouseInputReady) return;
+            if (e.Control && e.KeyCode == Keys.Z)
+            {
+                UndoSelectionOperation();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                return;
+            }
+            if (e.Control && e.KeyCode == Keys.Y)
+            {
+                RedoSelectionOperation();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                return;
+            }
             if (e.KeyCode == Keys.Escape)
             {
                 CancelSelection();
