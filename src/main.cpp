@@ -783,6 +783,84 @@ bool SendCaptureServerCommand(const std::wstring& command, DWORD timeoutMs) {
     }
 }
 
+bool SendCaptureServerCommandForExitCode(const std::wstring& command, DWORD timeoutMs, DWORD* exitCode) {
+    if (exitCode) *exitCode = 1;
+
+    std::wstring payload = command + L"\n";
+    DWORD startTick = GetTickCount();
+    HANDLE pipe = INVALID_HANDLE_VALUE;
+    for (;;) {
+        pipe = CreateFileW(kCapturePipeName, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL, NULL);
+        if (pipe != INVALID_HANDLE_VALUE) break;
+
+        DWORD elapsed = GetTickCount() - startTick;
+        if (elapsed >= timeoutMs) return false;
+
+        DWORD error = GetLastError();
+        DWORD remaining = timeoutMs - elapsed;
+        if (error == ERROR_PIPE_BUSY) {
+            WaitNamedPipeW(kCapturePipeName, std::min<DWORD>(remaining, 100));
+        } else {
+            Sleep(std::min<DWORD>(remaining, 50));
+        }
+    }
+
+    DWORD bytesWritten = 0;
+    DWORD bytesToWrite = static_cast<DWORD>(payload.size() * sizeof(wchar_t));
+    BOOL ok = WriteFile(pipe, payload.data(), bytesToWrite, &bytesWritten, NULL);
+    if (!ok || bytesWritten != bytesToWrite) {
+        CloseHandle(pipe);
+        return false;
+    }
+
+    std::vector<char> responseBytes;
+    for (;;) {
+        DWORD elapsed = GetTickCount() - startTick;
+        if (elapsed >= timeoutMs) {
+            CloseHandle(pipe);
+            return false;
+        }
+
+        DWORD available = 0;
+        if (!PeekNamedPipe(pipe, NULL, 0, NULL, &available, NULL)) {
+            CloseHandle(pipe);
+            return false;
+        }
+
+        if (available == 0) {
+            Sleep(25);
+            continue;
+        }
+
+        std::vector<char> buffer(available);
+        DWORD read = 0;
+        if (!ReadFile(pipe, buffer.data(), available, &read, NULL)) {
+            CloseHandle(pipe);
+            return false;
+        }
+        responseBytes.insert(responseBytes.end(), buffer.data(), buffer.data() + read);
+
+        size_t charCount = responseBytes.size() / sizeof(wchar_t);
+        if (charCount == 0) continue;
+        std::wstring response(reinterpret_cast<const wchar_t*>(responseBytes.data()), charCount);
+        size_t newline = response.find(L'\n');
+        if (newline == std::wstring::npos) continue;
+
+        response.resize(newline);
+        if (!response.empty() && response.back() == L'\r') response.pop_back();
+        wchar_t* end = NULL;
+        unsigned long value = wcstoul(response.c_str(), &end, 10);
+        if (end == response.c_str()) {
+            CloseHandle(pipe);
+            return false;
+        }
+        if (exitCode) *exitCode = static_cast<DWORD>(value);
+        CloseHandle(pipe);
+        return true;
+    }
+}
+
 void StartCaptureHelperServer() {
     if (g_captureServerStartAttempted) return;
     g_captureServerStartAttempted = true;
@@ -908,12 +986,23 @@ void DisableStoreStartupAfterLicenseExpired() {
 // 全屏截图后台线程参数包
 struct FullscreenCaptureArgs {
     std::wstring command;
+    std::wstring fallbackCommand;
     HWND mainWnd;
+    bool usePipe;
 };
 
 static DWORD WINAPI FullscreenCaptureThread(LPVOID param) {
     auto* args = static_cast<FullscreenCaptureArgs*>(param);
-    bool success = RunHiddenCommand(args->command, 30000);
+    bool success = false;
+    if (args->usePipe) {
+        DWORD exitCode = 1;
+        success = SendCaptureServerCommandForExitCode(args->command, 30000, &exitCode) && exitCode == 0;
+        if (!success && !args->fallbackCommand.empty()) {
+            success = RunHiddenCommand(args->fallbackCommand, 30000);
+        }
+    } else {
+        success = RunHiddenCommand(args->command, 30000);
+    }
     PostMessageW(args->mainWnd, kFullscreenDoneMessage, success ? 1 : 0, 0);
     delete args;
     return 0;
@@ -928,10 +1017,13 @@ void LaunchHdrFullscreenCapture(HWND owner) {
         return;
     }
     g_lastFullscreenCapturePath = GetFullscreenNotificationCapturePath();
-    std::wstring command = QuotePath(helperPath) +
+    StartCaptureHelperServer();
+    std::wstring pipeCommand = L"fullscreen-clip\t" + IntText(CurrentUiLanguage()) +
+        L"\t" + g_lastFullscreenCapturePath;
+    std::wstring fallbackCommand = QuotePath(helperPath) +
         L" --fullscreen-clip --output " + QuoteCommandLineArgument(g_lastFullscreenCapturePath) +
         L" --lang " + IntText(CurrentUiLanguage());
-    auto* args = new FullscreenCaptureArgs{command, g_mainWindow};
+    auto* args = new FullscreenCaptureArgs{pipeCommand, fallbackCommand, g_mainWindow, true};
     HANDLE hThread = CreateThread(NULL, 0, FullscreenCaptureThread, args, 0, NULL);
     if (hThread) {
         CloseHandle(hThread);

@@ -20,6 +20,8 @@ internal static class Program
 {
     private const string PipeName = "HdrSdrBrightnessCapture";
     private static int activeRegionCapture;
+    private static readonly object SharedCaptureRuntimeLock = new();
+    private static Task<CaptureRuntime>? sharedCaptureRuntimeTask;
     private const uint D3d11CreateDeviceBgraSupport = 0x20;
     private const uint D3d11SdkVersion = 7;
     private const uint D3dDriverTypeHardware = 1;
@@ -213,13 +215,15 @@ internal static class Program
             });
         }
 
+        _ = GetSharedCaptureRuntimeAsync();
+
         while (!cancellation.IsCancellationRequested)
         {
             try
             {
                 await using NamedPipeServerStream pipe = new(
                     PipeName,
-                    PipeDirection.In,
+                    PipeDirection.InOut,
                     1,
                     PipeTransmissionMode.Byte,
                     PipeOptions.Asynchronous);
@@ -240,17 +244,8 @@ internal static class Program
                 string? command = await reader.ReadLineAsync(cancellation.Token);
                 if (!string.IsNullOrWhiteSpace(command))
                 {
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await HandleServerCommandAsync(command);
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.WriteLine(ex);
-                        }
-                    }, cancellation.Token);
+                    int resultCode = await DispatchServerCommandAsync(command, cancellation.Token);
+                    await TryWritePipeResponseAsync(pipe, resultCode, cancellation.Token);
                 }
             }
             catch (OperationCanceledException)
@@ -270,34 +265,214 @@ internal static class Program
         return 0;
     }
 
-    private static async Task HandleServerCommandAsync(string command)
+    private static async Task<int> DispatchServerCommandAsync(string command, CancellationToken cancellationToken)
     {
         string[] parts = command.Split('\t');
-        if (parts.Length == 0) return;
+        if (parts.Length == 0) return 2;
 
         if (string.Equals(parts[0], "select-region", StringComparison.OrdinalIgnoreCase))
         {
             if (System.Threading.Interlocked.Exchange(ref activeRegionCapture, 1) == 1)
             {
-                return;
+                return 2;
             }
 
-            int language = parts.Length > 1 && int.TryParse(parts[1], System.Globalization.NumberStyles.Integer,
-                System.Globalization.CultureInfo.InvariantCulture, out int parsedLanguage)
-                ? parsedLanguage
-                : 0;
+            int language = ParseCommandInt(parts, 1, 0);
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await RunServerRegionCaptureAsync(language);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine(ex);
+                }
+                finally
+                {
+                    System.Threading.Volatile.Write(ref activeRegionCapture, 0);
+                }
+            }, cancellationToken);
+            return 0;
+        }
+
+        return await HandleServerCommandAsync(parts);
+    }
+
+    private static int ParseCommandInt(string[] parts, int index, int fallback)
+    {
+        return index < parts.Length &&
+            int.TryParse(parts[index], System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out int value)
+            ? value
+            : fallback;
+    }
+
+    private static async Task TryWritePipeResponseAsync(NamedPipeServerStream pipe, int resultCode, CancellationToken cancellationToken)
+    {
+        if (!pipe.IsConnected || !pipe.CanWrite) return;
+        try
+        {
+            await using StreamWriter writer = new(pipe, Encoding.Unicode, 1024, leaveOpen: true);
+            await writer.WriteLineAsync(resultCode.ToString(System.Globalization.CultureInfo.InvariantCulture).AsMemory(), cancellationToken);
+            await writer.FlushAsync(cancellationToken);
+        }
+        catch
+        {
+        }
+    }
+
+    private static async Task RunServerRegionCaptureAsync(int language)
+    {
+        if (language > 0) CaptureText.SetLanguageId(language);
+
+        ToneMapOptions toneMap = ToneMapOptions.FromArgs(Array.Empty<string>());
+        string outputPath = ResolveOutputPath(Array.Empty<string>());
+        await CaptureSelectedRegionFastAsync(DirectXPixelFormat.R16G16B16A16Float, outputPath, toneMap, false);
+    }
+
+    private static async Task<int> HandleServerCommandAsync(string[] parts)
+    {
+        if (string.Equals(parts[0], "fullscreen-clip", StringComparison.OrdinalIgnoreCase))
+        {
+            int language = ParseCommandInt(parts, 1, 0);
             if (language > 0) CaptureText.SetLanguageId(language);
 
+            string outputPath = parts.Length > 2 && !string.IsNullOrWhiteSpace(parts[2])
+                ? parts[2]
+                : ResolveOutputPath(Array.Empty<string>());
             ToneMapOptions toneMap = ToneMapOptions.FromArgs(Array.Empty<string>());
-            string outputPath = ResolveOutputPath(Array.Empty<string>());
             try
             {
-                await CaptureSelectedRegionFastAsync(DirectXPixelFormat.R16G16B16A16Float, outputPath, toneMap, false);
+                CaptureRuntime runtime = await GetSharedCaptureRuntimeAsync();
+                ReadbackResult result = await CaptureFrameAsync(runtime.Item, runtime.Device, runtime.Native,
+                    DirectXPixelFormat.R16G16B16A16Float, toneMap, false);
+                RunSta(() => CopyBgraToClipboard(result.Width, result.Height, result.Bgra));
+                if (!string.IsNullOrWhiteSpace(outputPath))
+                {
+                    await SaveFullscreenEditImageAsync(outputPath, result.Width, result.Height, result.Bgra);
+                }
+                return 0;
+            }
+            catch (TimeoutException)
+            {
+                Console.WriteLine("Timed out waiting for a WGC frame.");
+                ResetSharedCaptureRuntime();
+                return 4;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Capture failed: {ex.GetType().Name}: {ex.Message}");
+                ResetSharedCaptureRuntime();
+                return 8;
+            }
+        }
+
+        return 2;
+    }
+
+    private static void ResetSharedCaptureRuntime()
+    {
+        Task<CaptureRuntime>? oldTask;
+        lock (SharedCaptureRuntimeLock)
+        {
+            oldTask = sharedCaptureRuntimeTask;
+            sharedCaptureRuntimeTask = null;
+        }
+
+        if (oldTask?.Status == TaskStatus.RanToCompletion)
+        {
+            oldTask.Result.Dispose();
+        }
+    }
+
+    private static Task<CaptureRuntime> GetSharedCaptureRuntimeAsync()
+    {
+        lock (SharedCaptureRuntimeLock)
+        {
+            if (sharedCaptureRuntimeTask is null ||
+                sharedCaptureRuntimeTask.IsFaulted ||
+                sharedCaptureRuntimeTask.IsCanceled)
+            {
+                sharedCaptureRuntimeTask = CaptureRuntime.CreateAsync();
+            }
+
+            return sharedCaptureRuntimeTask;
+        }
+    }
+
+    private static async Task<RegionCaptureSource> CapturePrimaryMonitorGpuFrameAsync(DirectXPixelFormat requestedFormat)
+    {
+        CaptureRuntime runtime = await GetSharedCaptureRuntimeAsync();
+        CapturedGpuFrame gpuFrame = await CaptureGpuFrameAsync(runtime.Item, runtime.Device, requestedFormat);
+        return new RegionCaptureSource(runtime, gpuFrame);
+    }
+
+    private sealed class CaptureRuntime : IDisposable
+    {
+        private CaptureRuntime(NativeD3D native, IDirect3DDevice device, GraphicsCaptureItem item)
+        {
+            Native = native;
+            Device = device;
+            Item = item;
+        }
+
+        public NativeD3D Native { get; }
+        public IDirect3DDevice Device { get; }
+        public GraphicsCaptureItem Item { get; }
+
+        public static async Task<CaptureRuntime> CreateAsync()
+        {
+            NativeD3D? native = null;
+            IDirect3DDevice? device = null;
+            GraphicsCaptureItem? item = null;
+            try
+            {
+                native = NativeD3D.Create();
+                device = native.CreateWinRtDevice();
+                var access = await GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Programmatic);
+                if (!string.Equals(access.ToString(), "Allowed", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException($"Programmatic capture access: {access}");
+                }
+
+                item = CreateItemForPrimaryMonitor();
+                CaptureRuntime runtime = new(native, device, item);
+                native = null;
+                device = null;
+                item = null;
+                return runtime;
             }
             finally
             {
-                System.Threading.Volatile.Write(ref activeRegionCapture, 0);
+                DisposeIfPossible(item);
+                DisposeIfPossible(device);
+                native?.Dispose();
             }
+        }
+
+        public void Dispose()
+        {
+            DisposeIfPossible(Item);
+            DisposeIfPossible(Device);
+            Native.Dispose();
+        }
+    }
+
+    private sealed class RegionCaptureSource : IDisposable
+    {
+        public RegionCaptureSource(CaptureRuntime runtime, CapturedGpuFrame gpuFrame)
+        {
+            Runtime = runtime;
+            GpuFrame = gpuFrame;
+        }
+
+        public CaptureRuntime Runtime { get; }
+        public CapturedGpuFrame GpuFrame { get; }
+
+        public void Dispose()
+        {
+            GpuFrame.Dispose();
         }
     }
 
@@ -932,16 +1107,9 @@ internal static class Program
 
         if (selectRegion)
         {
-            // 全屏捕获与选区界面并发启动：Form 先显示"正在捕获"，完成后自动切换到 HDR 预览。
-            // 捕获完成后，从已有 BGRA 裁剪选区，无需第二次 WGC。
-            Task<ReadbackResult> regionTask = Task.Run(async () =>
-                await CaptureFrameAsync(item, device, native, requestedFormat, toneMap, diagnostic));
-            Task<Bitmap> previewTask = regionTask.ContinueWith(t =>
-                t.IsCompletedSuccessfully
-                    ? CreateBitmapFromBgra(t.Result.Width, t.Result.Height, t.Result.Bgra)
-                    : throw t.Exception!.GetBaseException(),
-                TaskContinuationOptions.None);
-            return await SelectAndCommitRegionAsync(regionTask, previewTask, outputPath, diagnostic);
+            Task<CapturedGpuFrame> regionTask = Task.Run(async () =>
+                await CaptureGpuFrameAsync(item, device, requestedFormat));
+            return await SelectAndCommitRegionAsync(regionTask, native, outputPath, toneMap, diagnostic);
         }
 
         Task<ReadbackResult> captureTask = Task.Run(() => CaptureFrameAsync(item, device, native, requestedFormat, toneMap, diagnostic));
@@ -991,14 +1159,9 @@ internal static class Program
         ToneMapOptions toneMap,
         bool diagnostic)
     {
-        Task<ReadbackResult> regionTask = Task.Run(async () =>
-            await CapturePrimaryMonitorFrameAsync(requestedFormat, toneMap, diagnostic));
-        Task<Bitmap> previewTask = regionTask.ContinueWith(t =>
-            t.IsCompletedSuccessfully
-                ? CreateBitmapFromBgra(t.Result.Width, t.Result.Height, t.Result.Bgra)
-                : throw t.Exception!.GetBaseException(),
-            TaskContinuationOptions.None);
-        return await SelectAndCommitRegionAsync(regionTask, previewTask, outputPath, diagnostic);
+        Task<RegionCaptureSource> regionTask = Task.Run(async () =>
+            await CapturePrimaryMonitorGpuFrameAsync(requestedFormat));
+        return await SelectAndCommitRegionAsync(regionTask, outputPath, toneMap, diagnostic);
     }
 
     private static async Task<ReadbackResult> CapturePrimaryMonitorFrameAsync(
@@ -1028,25 +1191,20 @@ internal static class Program
     }
 
     private static async Task<int> SelectAndCommitRegionAsync(
-        Task<ReadbackResult> regionTask,
-        Task<Bitmap> previewTask,
+        Task<RegionCaptureSource> regionTask,
         string outputPath,
+        ToneMapOptions toneMap,
         bool diagnostic)
     {
         Bitmap previewBitmap;
         try
         {
-            previewBitmap = await previewTask;
-        }
-        catch (TimeoutException)
-        {
-            Console.WriteLine("Timed out waiting for a WGC frame.");
-            return 4;
+            previewBitmap = CreateFastScreenPreviewBitmap();
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Capture failed: {ex.GetType().Name}: {ex.Message}");
-            return 8;
+            Console.WriteLine($"Fast preview failed: {ex.GetType().Name}: {ex.Message}");
+            previewBitmap = new Bitmap(1, 1, PixelFormat.Format32bppArgb);
         }
 
         RegionSelectionForm.RegionSelectionResult? selection = null;
@@ -1064,7 +1222,11 @@ internal static class Program
 
         if (!selection.HasValue)
         {
-            if (regionTask.IsFaulted)
+            if (regionTask.IsCompletedSuccessfully)
+            {
+                regionTask.Result.Dispose();
+            }
+            else if (regionTask.IsFaulted)
             {
                 try
                 {
@@ -1081,14 +1243,21 @@ internal static class Program
                     return 8;
                 }
             }
+            else
+            {
+                _ = regionTask.ContinueWith(t =>
+                {
+                    if (t.IsCompletedSuccessfully) t.Result.Dispose();
+                }, TaskScheduler.Default);
+            }
             Console.WriteLine("Region selection cancelled.");
             return 2;
         }
 
-        ReadbackResult fullCapture;
+        RegionCaptureSource captureSource;
         try
         {
-            fullCapture = await regionTask;
+            captureSource = await regionTask;
         }
         catch (TimeoutException)
         {
@@ -1101,9 +1270,17 @@ internal static class Program
             return 8;
         }
 
-        if (diagnostic) fullCapture.PrintStats();
+        ReadbackResult result;
+        using (captureSource)
+        {
+            result = captureSource.Runtime.Native.ReadbackTexture(
+                captureSource.GpuFrame.Texture,
+                toneMap,
+                diagnostic,
+                selection.Value.Region);
+        }
+        if (diagnostic) result.PrintStats();
 
-        ReadbackResult result = CropResult(fullCapture, selection.Value.Region);
         result = ApplySelectionEdits(result, selection.Value);
         Console.WriteLine($"Selected region: {selection.Value.Region.X},{selection.Value.Region.Y} {selection.Value.Region.Width}x{selection.Value.Region.Height}");
         if (selection.Value.Action == RegionSelectionForm.SelectionCommitAction.Copy)
@@ -1131,6 +1308,122 @@ internal static class Program
             Console.WriteLine($"Save failed: {ex.GetType().Name}: {ex.Message}");
             return 8;
         }
+    }
+
+    private static async Task<int> SelectAndCommitRegionAsync(
+        Task<CapturedGpuFrame> regionTask,
+        NativeD3D native,
+        string outputPath,
+        ToneMapOptions toneMap,
+        bool diagnostic)
+    {
+        Bitmap previewBitmap;
+        try
+        {
+            previewBitmap = CreateFastScreenPreviewBitmap();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Fast preview failed: {ex.GetType().Name}: {ex.Message}");
+            previewBitmap = new Bitmap(1, 1, PixelFormat.Format32bppArgb);
+        }
+
+        RegionSelectionForm.RegionSelectionResult? selection = null;
+        RunSta(() =>
+        {
+            using RegionSelectionForm form = new(previewBitmap);
+            selection = form.ShowDialog() == DialogResult.OK
+                ? new RegionSelectionForm.RegionSelectionResult(
+                    form.SelectedImageRegion,
+                    form.CommitAction,
+                    form.SelectedPreset,
+                    form.Operations)
+                : null;
+        });
+
+        if (!selection.HasValue)
+        {
+            if (regionTask.IsCompletedSuccessfully)
+            {
+                regionTask.Result.Dispose();
+            }
+            else
+            {
+                _ = regionTask.ContinueWith(t =>
+                {
+                    if (t.IsCompletedSuccessfully) t.Result.Dispose();
+                }, TaskScheduler.Default);
+            }
+            Console.WriteLine("Region selection cancelled.");
+            return 2;
+        }
+
+        CapturedGpuFrame gpuFrame;
+        try
+        {
+            gpuFrame = await regionTask;
+        }
+        catch (TimeoutException)
+        {
+            Console.WriteLine("Timed out waiting for a WGC frame.");
+            return 4;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Capture failed: {ex.GetType().Name}: {ex.Message}");
+            return 8;
+        }
+
+        ReadbackResult result;
+        using (gpuFrame)
+        {
+            result = native.ReadbackTexture(gpuFrame.Texture, toneMap, diagnostic, selection.Value.Region);
+        }
+        if (diagnostic) result.PrintStats();
+
+        result = ApplySelectionEdits(result, selection.Value);
+        Console.WriteLine($"Selected region: {selection.Value.Region.X},{selection.Value.Region.Y} {selection.Value.Region.Width}x{selection.Value.Region.Height}");
+        if (selection.Value.Action == RegionSelectionForm.SelectionCommitAction.Copy)
+        {
+            RunSta(() => CopyBgraToClipboard(result.Width, result.Height, result.Bgra));
+            Console.WriteLine("Copied selected region to clipboard.");
+            return 0;
+        }
+
+        string? savePath = PromptSaveAsPath(outputPath);
+        if (string.IsNullOrWhiteSpace(savePath))
+        {
+            Console.WriteLine("Save cancelled.");
+            return 2;
+        }
+
+        try
+        {
+            await SavePngAsync(savePath, result.Width, result.Height, result.Bgra);
+            Console.WriteLine($"Saved PNG: {savePath}");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Save failed: {ex.GetType().Name}: {ex.Message}");
+            return 8;
+        }
+    }
+
+    private static Bitmap CreateFastScreenPreviewBitmap()
+    {
+        System.Drawing.Rectangle bounds = Screen.PrimaryScreen?.Bounds ??
+            new System.Drawing.Rectangle(0, 0, 1, 1);
+        if (bounds.Width <= 0 || bounds.Height <= 0)
+        {
+            bounds = new System.Drawing.Rectangle(0, 0, 1, 1);
+        }
+
+        Bitmap bitmap = new(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb);
+        bitmap.SetResolution(96.0f, 96.0f);
+        using Graphics graphics = Graphics.FromImage(bitmap);
+        graphics.CopyFromScreen(bounds.Left, bounds.Top, 0, 0, bounds.Size, CopyPixelOperation.SourceCopy);
+        return bitmap;
     }
 
     private static async Task<ReadbackResult> CaptureFrameAsync(

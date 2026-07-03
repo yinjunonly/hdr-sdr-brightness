@@ -23,17 +23,17 @@ Install from the [Microsoft Store](https://apps.microsoft.com/detail/9nksvcpjl35
 Use the Windows x64 package:
 
 ```text
-HdrSdrBrightness-1.0.14-win64.zip
+HdrSdrBrightness-1.0.15-win64.zip
 ```
 
 Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no installer, no service, and no administrator privileges are required.
 
-### What's New In 1.0.14
+### What's New In 1.0.15
 
-- Adds `Ctrl+Z` / `Ctrl+Y` shortcuts for undo and redo in the HDR screenshot annotation toolbar.
-- Improves portable-build auto-start: if `schtasks.exe` cannot create the login task, the app falls back to PowerShell ScheduledTasks APIs.
-- Repairs old Run-key-only portable startup setups in the background so the app can start earlier after sign-in.
-- Keeps Store background launch responsive by moving the Store license check off the startup path.
+- Makes region screenshot invocation feel faster by showing the selection overlay immediately with a quick preview.
+- Processes only the selected region for HDR readback and tone mapping after region selection, instead of processing the full screen first.
+- Warms and reuses the HDR capture helper's D3D / Windows Graphics Capture runtime in the background.
+- Routes fullscreen HDR screenshots through the persistent helper when available, reducing repeated helper startup overhead.
 
 ![HDR screenshot capture workflow](image/README/hdr-screenshot-1.0.10.png)
 
@@ -217,17 +217,17 @@ SDR white level
 Windows x64 用户下载：
 
 ```text
-HdrSdrBrightness-1.0.14-win64.zip
+HdrSdrBrightness-1.0.15-win64.zip
 ```
 
 解压后运行 `HdrSdrBrightness.exe`。这是便携程序：不需要安装，不创建服务，也不需要管理员权限。
 
-### 1.0.14 更新内容
+### 1.0.15 更新内容
 
-- HDR 截图标注工具栏新增 `Ctrl+Z` / `Ctrl+Y` 撤销与重做快捷键。
-- 改进便携版开机自启：如果 `schtasks.exe` 创建登录任务失败，会自动 fallback 到 PowerShell ScheduledTasks API。
-- 旧版仅 Run Key 自启的便携版用户会在后台自动补登录计划任务，让登录后启动更早。
-- Store 后台启动时不再同步等待许可检查，先让托盘、热键和亮度逻辑就绪。
+- 区域截图会先用快速预览立刻显示框选层，减少按下快捷键后的等待感。
+- 选区完成后只对选中的区域做 HDR readback 和 tone mapping，不再先处理整屏再裁剪。
+- HDR 截图 helper 会在后台预热并复用 D3D / Windows Graphics Capture 运行时。
+- 全屏 HDR 截图优先复用常驻 helper，减少反复启动 helper 的开销。
 
 ![HDR 截图捕获流程](image/README/hdr-screenshot-1.0.10-zh.png)
 
