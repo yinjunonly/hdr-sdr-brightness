@@ -10,9 +10,7 @@ using Windows.Foundation;
 using Windows.Graphics.Capture;
 using Windows.Graphics.DirectX;
 using Windows.Graphics.DirectX.Direct3D11;
-using Windows.Graphics.Imaging;
 using Windows.Services.Store;
-using Windows.Storage;
 using WinRT;
 using WinRT.Interop;
 
@@ -20,18 +18,6 @@ internal static class Program
 {
     private const string PipeName = "HdrSdrBrightnessCapture";
     private static int activeRegionCapture;
-    private static readonly object SharedCaptureRuntimeLock = new();
-    private static Task<CaptureRuntime>? sharedCaptureRuntimeTask;
-    private const uint D3d11CreateDeviceBgraSupport = 0x20;
-    private const uint D3d11SdkVersion = 7;
-    private const uint D3dDriverTypeHardware = 1;
-    private const uint D3d11UsageStaging = 3;
-    private const uint D3d11CpuAccessRead = 0x20000;
-    private const uint D3d11MapRead = 1;
-    private const uint QdcOnlyActivePaths = 0x00000002;
-    private const uint DisplayConfigGetSdrWhiteLevel = 11;
-    private const uint ErrorSuccess = 0;
-    private const uint ErrorInsufficientBuffer = 122;
     private const uint WdaExcludeFromCapture = 0x00000011;
     private const int DwmwaUseImmersiveDarkMode = 20;
     private const int DwmwaUseImmersiveDarkModeLegacy = 19;
@@ -49,15 +35,6 @@ internal static class Program
     private const int WmHotkey = 0x0312;
     private const int VkEscape = 0x1B;
 
-    private const uint DxgiFormatR16G16B16A16Float = 10;
-    private const uint DxgiFormatR10G10B10A2Unorm = 24;
-    private const uint DxgiFormatR8G8B8A8Unorm = 28;
-    private const uint DxgiFormatR8G8B8A8UnormSrgb = 29;
-    private const uint DxgiFormatB8G8R8A8Unorm = 87;
-    private const uint DxgiFormatB8G8R8A8UnormSrgb = 91;
-
-    private static readonly Guid IidIdxgiDevice = new("54ec77fa-1377-44e6-8c32-88fd5f44c84c");
-    private static readonly Guid IidId3d11Texture2D = new("6f15aaf2-d208-4e89-9ab4-489535d34f9c");
     private static readonly Guid IidGraphicsCaptureItem = new("79c3f95b-31f7-4ec2-a464-632ef5d30760");
     private static readonly Guid IidGraphicsCaptureItemInterop = new("3628e81b-3cac-4c60-b7f4-23ce0e0c3356");
 
@@ -70,24 +47,24 @@ internal static class Program
         Console.WriteLine("HDR SDR Capture Helper");
         Console.WriteLine("Capturing the primary monitor by default. Pass --picker to choose a screen/window.");
 
-        if (HasArg(args, "--check-store-license"))
+        if (CaptureArgs.Has(args, "--check-store-license"))
         {
             return await CheckStoreLicenseAsync();
         }
 
-        if (HasArg(args, "--server"))
+        if (CaptureArgs.Has(args, "--server"))
         {
             return await RunCommandServerAsync(args);
         }
 
         ToneMapOptions toneMap = ToneMapOptions.FromArgs(args);
-        bool explicitOutput = HasArg(args, "--output");
+        bool explicitOutput = CaptureArgs.Has(args, "--output");
         string outputPath = ResolveOutputPath(args);
 
-        string? editFilePath = ArgValue(args, "--edit-file");
+        string? editFilePath = CaptureArgs.Value(args, "--edit-file");
         if (!string.IsNullOrWhiteSpace(editFilePath))
         {
-            return EditExistingImage(editFilePath, outputPath, !HasArg(args, "--skip-initial-copy"));
+            return EditExistingImage(editFilePath, outputPath, !CaptureArgs.Has(args, "--skip-initial-copy"));
         }
 
         if (!GraphicsCaptureSession.IsSupported())
@@ -96,13 +73,13 @@ internal static class Program
             return 1;
         }
 
-        DirectXPixelFormat format = HasArg(args, "--bgra8")
+        DirectXPixelFormat format = CaptureArgs.Has(args, "--bgra8")
             ? DirectXPixelFormat.B8G8R8A8UIntNormalized
             : DirectXPixelFormat.R16G16B16A16Float;
-        bool selectRegion = HasArg(args, "--select-region");
-        bool picker = HasArg(args, "--picker");
-        bool diagnostic = HasArg(args, "--diagnostic");
-        bool fullscreenClip = HasArg(args, "--fullscreen-clip");
+        bool selectRegion = CaptureArgs.Has(args, "--select-region");
+        bool picker = CaptureArgs.Has(args, "--picker");
+        bool diagnostic = CaptureArgs.Has(args, "--diagnostic");
+        bool fullscreenClip = CaptureArgs.Has(args, "--fullscreen-clip");
         if (selectRegion && !picker && !fullscreenClip)
         {
             return await CaptureSelectedRegionFastAsync(format, outputPath, toneMap, diagnostic);
@@ -123,9 +100,8 @@ internal static class Program
         if (item is null)
         {
             Console.WriteLine("Using primary monitor capture item.");
-            var access = await GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Programmatic);
-            Console.WriteLine($"Programmatic capture access: {access}");
-            item = CreateItemForPrimaryMonitor();
+            await WgcCapture.RequestProgrammaticCaptureAccessAsync();
+            item = WgcCapture.CreatePrimaryMonitorItem();
         }
 
         Console.WriteLine($"Selected: {item.DisplayName}");
@@ -135,8 +111,8 @@ internal static class Program
         try
         {
             exitCode = await CaptureOneFrameAsync(item, winrtDevice, native, format, outputPath, toneMap,
-                selectRegion, !explicitOutput || HasArg(args, "--edit"),
-                HasArg(args, "--discard-output"), explicitOutput, diagnostic,
+                selectRegion, !explicitOutput || CaptureArgs.Has(args, "--edit"),
+                CaptureArgs.Has(args, "--discard-output"), explicitOutput, diagnostic,
                 fullscreenClip);
         }
         finally
@@ -144,26 +120,13 @@ internal static class Program
             DisposeIfPossible(winrtDevice);
             DisposeIfPossible(item);
         }
-        if (exitCode == 0 && HasArg(args, "--open-folder") && explicitOutput)
+        if (exitCode == 0 && CaptureArgs.Has(args, "--open-folder") && explicitOutput)
         {
             OpenOutputInExplorer(outputPath);
         }
 
         Console.WriteLine("Done.");
         return exitCode;
-    }
-
-    private static bool HasArg(string[] args, string name) =>
-        args.Any(arg => string.Equals(arg, name, StringComparison.OrdinalIgnoreCase));
-
-    private static string? ArgValue(string[] args, string name)
-    {
-        for (int i = 0; i + 1 < args.Length; i++)
-        {
-            if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase)) return args[i + 1];
-        }
-
-        return null;
     }
 
     private static async Task<int> CheckStoreLicenseAsync()
@@ -181,18 +144,11 @@ internal static class Program
         }
     }
 
-    private static int ArgInt(string[] args, string name, int fallback)
-    {
-        string? text = ArgValue(args, name);
-        return int.TryParse(text, System.Globalization.NumberStyles.Integer,
-            System.Globalization.CultureInfo.InvariantCulture, out int value) ? value : fallback;
-    }
-
     private static async Task<int> RunCommandServerAsync(string[] args)
     {
         using CancellationTokenSource cancellation = new();
-        int parentPid = ArgInt(args, "--parent-pid", 0);
-        int requestedIdleTimeoutMs = ArgInt(args, "--idle-timeout-ms", 90000);
+        int parentPid = CaptureArgs.Int(args, "--parent-pid", 0);
+        int requestedIdleTimeoutMs = CaptureArgs.Int(args, "--idle-timeout-ms", 90000);
         int idleTimeoutMs = requestedIdleTimeoutMs <= 0 ? 0 : Math.Max(5000, requestedIdleTimeoutMs);
         if (parentPid > 0)
         {
@@ -215,7 +171,7 @@ internal static class Program
             });
         }
 
-        _ = GetSharedCaptureRuntimeAsync();
+        _ = WgcCapture.GetSharedRuntimeAsync();
 
         while (!cancellation.IsCancellationRequested)
         {
@@ -344,8 +300,8 @@ internal static class Program
             ToneMapOptions toneMap = ToneMapOptions.FromArgs(Array.Empty<string>());
             try
             {
-                CaptureRuntime runtime = await GetSharedCaptureRuntimeAsync();
-                ReadbackResult result = await CaptureFrameAsync(runtime.Item, runtime.Device, runtime.Native,
+                CaptureRuntime runtime = await WgcCapture.GetSharedRuntimeAsync();
+                ReadbackResult result = await WgcCapture.CaptureFrameAsync(runtime.Item, runtime.Device, runtime.Native,
                     DirectXPixelFormat.R16G16B16A16Float, toneMap, false);
                 RunSta(() => CopyBgraToClipboard(result.Width, result.Height, result.Bgra));
                 if (!string.IsNullOrWhiteSpace(outputPath))
@@ -357,123 +313,18 @@ internal static class Program
             catch (TimeoutException)
             {
                 Console.WriteLine("Timed out waiting for a WGC frame.");
-                ResetSharedCaptureRuntime();
+                WgcCapture.ResetSharedRuntime();
                 return 4;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Capture failed: {ex.GetType().Name}: {ex.Message}");
-                ResetSharedCaptureRuntime();
+                WgcCapture.ResetSharedRuntime();
                 return 8;
             }
         }
 
         return 2;
-    }
-
-    private static void ResetSharedCaptureRuntime()
-    {
-        Task<CaptureRuntime>? oldTask;
-        lock (SharedCaptureRuntimeLock)
-        {
-            oldTask = sharedCaptureRuntimeTask;
-            sharedCaptureRuntimeTask = null;
-        }
-
-        if (oldTask?.Status == TaskStatus.RanToCompletion)
-        {
-            oldTask.Result.Dispose();
-        }
-    }
-
-    private static Task<CaptureRuntime> GetSharedCaptureRuntimeAsync()
-    {
-        lock (SharedCaptureRuntimeLock)
-        {
-            if (sharedCaptureRuntimeTask is null ||
-                sharedCaptureRuntimeTask.IsFaulted ||
-                sharedCaptureRuntimeTask.IsCanceled)
-            {
-                sharedCaptureRuntimeTask = CaptureRuntime.CreateAsync();
-            }
-
-            return sharedCaptureRuntimeTask;
-        }
-    }
-
-    private static async Task<RegionCaptureSource> CapturePrimaryMonitorGpuFrameAsync(DirectXPixelFormat requestedFormat)
-    {
-        CaptureRuntime runtime = await GetSharedCaptureRuntimeAsync();
-        CapturedGpuFrame gpuFrame = await CaptureGpuFrameAsync(runtime.Item, runtime.Device, requestedFormat);
-        return new RegionCaptureSource(runtime, gpuFrame);
-    }
-
-    private sealed class CaptureRuntime : IDisposable
-    {
-        private CaptureRuntime(NativeD3D native, IDirect3DDevice device, GraphicsCaptureItem item)
-        {
-            Native = native;
-            Device = device;
-            Item = item;
-        }
-
-        public NativeD3D Native { get; }
-        public IDirect3DDevice Device { get; }
-        public GraphicsCaptureItem Item { get; }
-
-        public static async Task<CaptureRuntime> CreateAsync()
-        {
-            NativeD3D? native = null;
-            IDirect3DDevice? device = null;
-            GraphicsCaptureItem? item = null;
-            try
-            {
-                native = NativeD3D.Create();
-                device = native.CreateWinRtDevice();
-                var access = await GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Programmatic);
-                if (!string.Equals(access.ToString(), "Allowed", StringComparison.OrdinalIgnoreCase))
-                {
-                    throw new InvalidOperationException($"Programmatic capture access: {access}");
-                }
-
-                item = CreateItemForPrimaryMonitor();
-                CaptureRuntime runtime = new(native, device, item);
-                native = null;
-                device = null;
-                item = null;
-                return runtime;
-            }
-            finally
-            {
-                DisposeIfPossible(item);
-                DisposeIfPossible(device);
-                native?.Dispose();
-            }
-        }
-
-        public void Dispose()
-        {
-            DisposeIfPossible(Item);
-            DisposeIfPossible(Device);
-            Native.Dispose();
-        }
-    }
-
-    private sealed class RegionCaptureSource : IDisposable
-    {
-        public RegionCaptureSource(CaptureRuntime runtime, CapturedGpuFrame gpuFrame)
-        {
-            Runtime = runtime;
-            GpuFrame = gpuFrame;
-        }
-
-        public CaptureRuntime Runtime { get; }
-        public CapturedGpuFrame GpuFrame { get; }
-
-        public void Dispose()
-        {
-            GpuFrame.Dispose();
-        }
     }
 
     private static void DisposeIfPossible(object? value)
@@ -484,496 +335,9 @@ internal static class Program
         }
     }
 
-    private static float ArgFloat(string[] args, string name, float fallback)
-    {
-        string? text = ArgValue(args, name);
-        return float.TryParse(text, System.Globalization.NumberStyles.Float,
-            System.Globalization.CultureInfo.InvariantCulture, out float value) ? value : fallback;
-    }
-
-    private enum CaptureLanguage
-    {
-        English = 1,
-        Chinese = 2,
-        Korean = 3,
-        Japanese = 4,
-        Russian = 5,
-        ChineseTraditional = 6,
-        German = 7
-    }
-
-    private enum CaptureString
-    {
-        HiddenOwnerTitle,
-        PreviewTitle,
-        SaveDialogTitle,
-        PngFilter,
-        ToolMarkerHint,
-        ToolMosaicHint,
-        UndoHint,
-        ResetHint,
-        PresetLowHint,
-        PresetBalancedHint,
-        PresetHighHint,
-        SaveAsFileHint,
-        CancelCloseHint,
-        DoneCopyCloseHint,
-        DoneButton,
-        PresetLow,
-        PresetBalanced,
-        PresetHigh,
-        StatusPreset,
-        MarkerModeStatus,
-        MosaicModeStatus,
-        ReadyStatus,
-        SavedStatus,
-        CopiedStatus,
-        CopyFailedPrefix,
-        NoUndoStatus,
-        UndoneStatus,
-        ResetStatus,
-        AddedMarkerStatus,
-        AddedMosaicStatus,
-        SelectHint,
-        ToolbarCancel,
-        ToolbarMarker,
-        ToolbarEllipse,
-        ToolbarPen,
-        ToolbarMosaic,
-        ToolbarColor,
-        ToolbarUndo,
-        ToolbarRedo,
-        ToolbarReset,
-        ToolbarHdrLow,
-        ToolbarHdrBalanced,
-        ToolbarHdrHigh,
-        ToolbarSave,
-        ToolbarCopy,
-        ProcessingStatus
-    }
-
-    private static class CaptureText
-    {
-        private static CaptureLanguage language = ResolveSystemLanguage();
-
-        public static string FontFamily => language switch
-        {
-            CaptureLanguage.Chinese => "Microsoft YaHei UI",
-            CaptureLanguage.ChineseTraditional => "Microsoft JhengHei UI",
-            CaptureLanguage.Korean => "Malgun Gothic",
-            CaptureLanguage.Japanese => "Yu Gothic UI",
-            _ => "Segoe UI"
-        };
-
-        public static void Initialize(string[] args)
-        {
-            string? value = ArgValue(args, "--lang");
-            if (int.TryParse(value, System.Globalization.NumberStyles.Integer,
-                System.Globalization.CultureInfo.InvariantCulture, out int id) &&
-                Enum.IsDefined(typeof(CaptureLanguage), id))
-            {
-                SetLanguageId(id);
-                return;
-            }
-
-            language = ResolveSystemLanguage();
-        }
-
-        public static void SetLanguageId(int id)
-        {
-            if (Enum.IsDefined(typeof(CaptureLanguage), id))
-            {
-                language = (CaptureLanguage)id;
-            }
-        }
-
-        public static string Get(CaptureString id)
-        {
-            return language switch
-            {
-                CaptureLanguage.Chinese => Zh(id),
-                CaptureLanguage.ChineseTraditional => ZhTw(id),
-                CaptureLanguage.Korean => Ko(id),
-                CaptureLanguage.Japanese => Ja(id),
-                CaptureLanguage.Russian => Ru(id),
-                CaptureLanguage.German => De(id),
-                _ => En(id)
-            };
-        }
-
-        private static CaptureLanguage ResolveSystemLanguage()
-        {
-            string name = System.Globalization.CultureInfo.CurrentUICulture.Name.ToLowerInvariant();
-            if (name.StartsWith("zh-hant") || name is "zh-tw" or "zh-hk" or "zh-mo") return CaptureLanguage.ChineseTraditional;
-            if (name.StartsWith("zh")) return CaptureLanguage.Chinese;
-            if (name.StartsWith("ko")) return CaptureLanguage.Korean;
-            if (name.StartsWith("ja")) return CaptureLanguage.Japanese;
-            if (name.StartsWith("ru")) return CaptureLanguage.Russian;
-            if (name.StartsWith("de")) return CaptureLanguage.German;
-            return CaptureLanguage.English;
-        }
-
-        private static string En(CaptureString id) => id switch
-        {
-            CaptureString.HiddenOwnerTitle => "HDR SDR Capture",
-            CaptureString.PreviewTitle => "HDR SDR Capture Preview",
-            CaptureString.SaveDialogTitle => "Save screenshot",
-            CaptureString.PngFilter => "PNG image|*.png",
-            CaptureString.ToolMarkerHint => "Box: drag to add a red frame",
-            CaptureString.ToolMosaicHint => "Mosaic: drag to hide sensitive content",
-            CaptureString.UndoHint => "Undo last step",
-            CaptureString.ResetHint => "Reset edits",
-            CaptureString.PresetLowHint => "Effect: Low",
-            CaptureString.PresetBalancedHint => "Effect: Balanced",
-            CaptureString.PresetHighHint => "Effect: High",
-            CaptureString.SaveAsFileHint => "Save as file",
-            CaptureString.CancelCloseHint => "Cancel and close",
-            CaptureString.DoneCopyCloseHint => "Copy and close",
-            CaptureString.DoneButton => "Done",
-            CaptureString.PresetLow => "Low",
-            CaptureString.PresetBalanced => "Balanced",
-            CaptureString.PresetHigh => "High",
-            CaptureString.StatusPreset => "Effect: {0}.",
-            CaptureString.MarkerModeStatus => "Box mode: drag on the image to add a red frame.",
-            CaptureString.MosaicModeStatus => "Mosaic mode: drag on the image to hide sensitive content.",
-            CaptureString.ReadyStatus => "Copy directly, or choose a tool to annotate first.",
-            CaptureString.SavedStatus => "Saved to file.",
-            CaptureString.CopiedStatus => "Copied to clipboard.",
-            CaptureString.CopyFailedPrefix => "Copy failed: ",
-            CaptureString.NoUndoStatus => "No annotations to undo.",
-            CaptureString.UndoneStatus => "Undid the last annotation.",
-            CaptureString.ResetStatus => "Reset.",
-            CaptureString.AddedMarkerStatus => "Added red frame. Continue annotating or click Done.",
-            CaptureString.AddedMosaicStatus => "Added mosaic. Continue hiding content or click Done.",
-            CaptureString.SelectHint => "Drag to select an area, Esc to cancel",
-            CaptureString.ToolbarCancel => "Cancel",
-            CaptureString.ToolbarMarker => "Rectangle annotation",
-            CaptureString.ToolbarEllipse => "Ellipse annotation",
-            CaptureString.ToolbarPen => "Pen annotation",
-            CaptureString.ToolbarMosaic => "Mosaic",
-            CaptureString.ToolbarColor => "Change annotation color",
-            CaptureString.ToolbarUndo => "Undo (Ctrl+Z)",
-            CaptureString.ToolbarRedo => "Redo (Ctrl+Y)",
-            CaptureString.ToolbarReset => "Reset",
-            CaptureString.ToolbarHdrLow => "HDR brightness: Low",
-            CaptureString.ToolbarHdrBalanced => "HDR brightness: Balanced",
-            CaptureString.ToolbarHdrHigh => "HDR brightness: High",
-            CaptureString.ToolbarSave => "Save to file",
-            CaptureString.ToolbarCopy => "Copy to clipboard",
-            CaptureString.ProcessingStatus => "Capturing…",
-            _ => string.Empty
-        };
-
-        private static string Zh(CaptureString id) => id switch
-        {
-            CaptureString.HiddenOwnerTitle => "HDR SDR 截图",
-            CaptureString.PreviewTitle => "HDR SDR 截图预览",
-            CaptureString.SaveDialogTitle => "保存截图",
-            CaptureString.PngFilter => "PNG 图片|*.png",
-            CaptureString.ToolMarkerHint => "框选：拖拽添加红框",
-            CaptureString.ToolMosaicHint => "马赛克：拖拽遮挡敏感区域",
-            CaptureString.UndoHint => "撤销上一步",
-            CaptureString.ResetHint => "重置编辑",
-            CaptureString.PresetLowHint => "效果：低",
-            CaptureString.PresetBalancedHint => "效果：平衡",
-            CaptureString.PresetHighHint => "效果：高",
-            CaptureString.SaveAsFileHint => "保存为文件",
-            CaptureString.CancelCloseHint => "取消并关闭",
-            CaptureString.DoneCopyCloseHint => "完成复制并关闭",
-            CaptureString.DoneButton => "完成",
-            CaptureString.PresetLow => "低",
-            CaptureString.PresetBalanced => "平衡",
-            CaptureString.PresetHigh => "高",
-            CaptureString.StatusPreset => "效果：{0}。",
-            CaptureString.MarkerModeStatus => "框选模式：在图片上拖拽，为重点区域添加红框。",
-            CaptureString.MosaicModeStatus => "马赛克模式：在图片上拖拽，遮挡敏感内容。",
-            CaptureString.ReadyStatus => "可直接完成复制，也可先选择工具进行标注。",
-            CaptureString.SavedStatus => "已保存到文件。",
-            CaptureString.CopiedStatus => "已复制到剪贴板。",
-            CaptureString.CopyFailedPrefix => "复制失败：",
-            CaptureString.NoUndoStatus => "没有可撤销的标注。",
-            CaptureString.UndoneStatus => "已撤销上一步标注。",
-            CaptureString.ResetStatus => "已重置。",
-            CaptureString.AddedMarkerStatus => "已添加红框。可继续标注或点“完成”。",
-            CaptureString.AddedMosaicStatus => "已添加马赛克。可继续遮挡或点“完成”。",
-            CaptureString.SelectHint => "拖拽选择截图区域，Esc 取消",
-            CaptureString.ToolbarCancel => "取消",
-            CaptureString.ToolbarMarker => "矩形标注",
-            CaptureString.ToolbarEllipse => "椭圆标注",
-            CaptureString.ToolbarPen => "画笔标注",
-            CaptureString.ToolbarMosaic => "马赛克遮挡",
-            CaptureString.ToolbarColor => "切换标注颜色",
-            CaptureString.ToolbarUndo => "撤销 (Ctrl+Z)",
-            CaptureString.ToolbarRedo => "重做 (Ctrl+Y)",
-            CaptureString.ToolbarReset => "重置",
-            CaptureString.ToolbarHdrLow => "HDR 亮度：低",
-            CaptureString.ToolbarHdrBalanced => "HDR 亮度：平衡",
-            CaptureString.ToolbarHdrHigh => "HDR 亮度：高",
-            CaptureString.ToolbarSave => "保存到文件",
-            CaptureString.ToolbarCopy => "复制到剪贴板",
-            CaptureString.ProcessingStatus => "正在捕获…",
-            _ => string.Empty
-        };
-
-        private static string ZhTw(CaptureString id) => id switch
-        {
-            CaptureString.HiddenOwnerTitle => "HDR SDR 截圖",
-            CaptureString.PreviewTitle => "HDR SDR 截圖預覽",
-            CaptureString.SaveDialogTitle => "儲存截圖",
-            CaptureString.PngFilter => "PNG 圖片|*.png",
-            CaptureString.ToolMarkerHint => "框選：拖曳加入紅框",
-            CaptureString.ToolMosaicHint => "馬賽克：拖曳遮蔽敏感區域",
-            CaptureString.UndoHint => "復原上一步",
-            CaptureString.ResetHint => "重設編輯",
-            CaptureString.PresetLowHint => "效果：低",
-            CaptureString.PresetBalancedHint => "效果：平衡",
-            CaptureString.PresetHighHint => "效果：高",
-            CaptureString.SaveAsFileHint => "另存為檔案",
-            CaptureString.CancelCloseHint => "取消並關閉",
-            CaptureString.DoneCopyCloseHint => "完成複製並關閉",
-            CaptureString.DoneButton => "完成",
-            CaptureString.PresetLow => "低",
-            CaptureString.PresetBalanced => "平衡",
-            CaptureString.PresetHigh => "高",
-            CaptureString.StatusPreset => "效果：{0}。",
-            CaptureString.MarkerModeStatus => "框選模式：在圖片上拖曳，為重點區域加入紅框。",
-            CaptureString.MosaicModeStatus => "馬賽克模式：在圖片上拖曳，遮蔽敏感內容。",
-            CaptureString.ReadyStatus => "可直接完成複製，也可先選擇工具進行標註。",
-            CaptureString.SavedStatus => "已儲存到檔案。",
-            CaptureString.CopiedStatus => "已複製到剪貼簿。",
-            CaptureString.CopyFailedPrefix => "複製失敗：",
-            CaptureString.NoUndoStatus => "沒有可復原的標註。",
-            CaptureString.UndoneStatus => "已復原上一步標註。",
-            CaptureString.ResetStatus => "已重設。",
-            CaptureString.AddedMarkerStatus => "已加入紅框。可繼續標註或按「完成」。",
-            CaptureString.AddedMosaicStatus => "已加入馬賽克。可繼續遮蔽或按「完成」。",
-            CaptureString.SelectHint => "拖曳選擇截圖區域，Esc 取消",
-            CaptureString.ToolbarCancel => "取消",
-            CaptureString.ToolbarMarker => "矩形標註",
-            CaptureString.ToolbarEllipse => "橢圓標註",
-            CaptureString.ToolbarPen => "畫筆標註",
-            CaptureString.ToolbarMosaic => "馬賽克遮蔽",
-            CaptureString.ToolbarColor => "切換標註顏色",
-            CaptureString.ToolbarUndo => "復原 (Ctrl+Z)",
-            CaptureString.ToolbarRedo => "重做 (Ctrl+Y)",
-            CaptureString.ToolbarReset => "重設",
-            CaptureString.ToolbarHdrLow => "HDR 亮度：低",
-            CaptureString.ToolbarHdrBalanced => "HDR 亮度：平衡",
-            CaptureString.ToolbarHdrHigh => "HDR 亮度：高",
-            CaptureString.ToolbarSave => "儲存到檔案",
-            CaptureString.ToolbarCopy => "複製到剪貼簿",
-            CaptureString.ProcessingStatus => "正在擷取…",
-            _ => string.Empty
-        };
-
-        private static string Ko(CaptureString id) => id switch
-        {
-            CaptureString.HiddenOwnerTitle => "HDR SDR 캡처",
-            CaptureString.PreviewTitle => "HDR SDR 캡처 미리 보기",
-            CaptureString.SaveDialogTitle => "스크린샷 저장",
-            CaptureString.PngFilter => "PNG 이미지|*.png",
-            CaptureString.ToolMarkerHint => "상자: 끌어서 빨간 테두리 추가",
-            CaptureString.ToolMosaicHint => "모자이크: 끌어서 민감한 영역 가리기",
-            CaptureString.UndoHint => "마지막 단계 실행 취소",
-            CaptureString.ResetHint => "편집 초기화",
-            CaptureString.PresetLowHint => "효과: 낮음",
-            CaptureString.PresetBalancedHint => "효과: 균형",
-            CaptureString.PresetHighHint => "효과: 높음",
-            CaptureString.SaveAsFileHint => "파일로 저장",
-            CaptureString.CancelCloseHint => "취소하고 닫기",
-            CaptureString.DoneCopyCloseHint => "복사하고 닫기",
-            CaptureString.DoneButton => "완료",
-            CaptureString.PresetLow => "낮음",
-            CaptureString.PresetBalanced => "균형",
-            CaptureString.PresetHigh => "높음",
-            CaptureString.StatusPreset => "효과: {0}.",
-            CaptureString.MarkerModeStatus => "상자 모드: 이미지에서 끌어 빨간 테두리를 추가합니다.",
-            CaptureString.MosaicModeStatus => "모자이크 모드: 이미지에서 끌어 민감한 내용을 가립니다.",
-            CaptureString.ReadyStatus => "바로 복사하거나 먼저 도구를 선택해 주석을 추가할 수 있습니다.",
-            CaptureString.SavedStatus => "파일로 저장했습니다.",
-            CaptureString.CopiedStatus => "클립보드에 복사했습니다.",
-            CaptureString.CopyFailedPrefix => "복사 실패: ",
-            CaptureString.NoUndoStatus => "실행 취소할 주석이 없습니다.",
-            CaptureString.UndoneStatus => "마지막 주석을 실행 취소했습니다.",
-            CaptureString.ResetStatus => "초기화했습니다.",
-            CaptureString.AddedMarkerStatus => "빨간 테두리를 추가했습니다. 계속 주석을 달거나 완료를 클릭하세요.",
-            CaptureString.AddedMosaicStatus => "모자이크를 추가했습니다. 계속 가리거나 완료를 클릭하세요.",
-            CaptureString.SelectHint => "끌어서 영역 선택, Esc로 취소",
-            CaptureString.ToolbarCancel => "취소",
-            CaptureString.ToolbarMarker => "사각형 주석",
-            CaptureString.ToolbarEllipse => "타원 주석",
-            CaptureString.ToolbarPen => "펜 주석",
-            CaptureString.ToolbarMosaic => "모자이크",
-            CaptureString.ToolbarColor => "주석 색 변경",
-            CaptureString.ToolbarUndo => "실행 취소 (Ctrl+Z)",
-            CaptureString.ToolbarRedo => "다시 실행 (Ctrl+Y)",
-            CaptureString.ToolbarReset => "초기화",
-            CaptureString.ToolbarHdrLow => "HDR 밝기: 낮음",
-            CaptureString.ToolbarHdrBalanced => "HDR 밝기: 균형",
-            CaptureString.ToolbarHdrHigh => "HDR 밝기: 높음",
-            CaptureString.ToolbarSave => "파일로 저장",
-            CaptureString.ToolbarCopy => "클립보드에 복사",
-            CaptureString.ProcessingStatus => "캡처 중…",
-            _ => string.Empty
-        };
-
-        private static string Ja(CaptureString id) => id switch
-        {
-            CaptureString.HiddenOwnerTitle => "HDR SDR キャプチャ",
-            CaptureString.PreviewTitle => "HDR SDR キャプチャ プレビュー",
-            CaptureString.SaveDialogTitle => "スクリーンショットを保存",
-            CaptureString.PngFilter => "PNG 画像|*.png",
-            CaptureString.ToolMarkerHint => "枠: ドラッグして赤枠を追加",
-            CaptureString.ToolMosaicHint => "モザイク: ドラッグして機密部分を隠す",
-            CaptureString.UndoHint => "前の操作を元に戻す",
-            CaptureString.ResetHint => "編集をリセット",
-            CaptureString.PresetLowHint => "効果: 低",
-            CaptureString.PresetBalancedHint => "効果: バランス",
-            CaptureString.PresetHighHint => "効果: 高",
-            CaptureString.SaveAsFileHint => "ファイルとして保存",
-            CaptureString.CancelCloseHint => "キャンセルして閉じる",
-            CaptureString.DoneCopyCloseHint => "コピーして閉じる",
-            CaptureString.DoneButton => "完了",
-            CaptureString.PresetLow => "低",
-            CaptureString.PresetBalanced => "バランス",
-            CaptureString.PresetHigh => "高",
-            CaptureString.StatusPreset => "効果: {0}。",
-            CaptureString.MarkerModeStatus => "枠モード: 画像上でドラッグして赤枠を追加します。",
-            CaptureString.MosaicModeStatus => "モザイクモード: 画像上でドラッグして機密内容を隠します。",
-            CaptureString.ReadyStatus => "そのままコピーするか、先にツールを選んで注釈を追加できます。",
-            CaptureString.SavedStatus => "ファイルに保存しました。",
-            CaptureString.CopiedStatus => "クリップボードにコピーしました。",
-            CaptureString.CopyFailedPrefix => "コピー失敗: ",
-            CaptureString.NoUndoStatus => "元に戻せる注釈はありません。",
-            CaptureString.UndoneStatus => "前の注釈を元に戻しました。",
-            CaptureString.ResetStatus => "リセットしました。",
-            CaptureString.AddedMarkerStatus => "赤枠を追加しました。続けて注釈するか、完了をクリックしてください。",
-            CaptureString.AddedMosaicStatus => "モザイクを追加しました。続けて隠すか、完了をクリックしてください。",
-            CaptureString.SelectHint => "ドラッグして範囲を選択、Esc でキャンセル",
-            CaptureString.ToolbarCancel => "キャンセル",
-            CaptureString.ToolbarMarker => "矩形注釈",
-            CaptureString.ToolbarEllipse => "楕円注釈",
-            CaptureString.ToolbarPen => "ペン注釈",
-            CaptureString.ToolbarMosaic => "モザイク",
-            CaptureString.ToolbarColor => "注釈の色を変更",
-            CaptureString.ToolbarUndo => "元に戻す (Ctrl+Z)",
-            CaptureString.ToolbarRedo => "やり直し (Ctrl+Y)",
-            CaptureString.ToolbarReset => "リセット",
-            CaptureString.ToolbarHdrLow => "HDR 明るさ: 低",
-            CaptureString.ToolbarHdrBalanced => "HDR 明るさ: バランス",
-            CaptureString.ToolbarHdrHigh => "HDR 明るさ: 高",
-            CaptureString.ToolbarSave => "ファイルに保存",
-            CaptureString.ToolbarCopy => "クリップボードにコピー",
-            CaptureString.ProcessingStatus => "キャプチャ中…",
-            _ => string.Empty
-        };
-
-        private static string Ru(CaptureString id) => id switch
-        {
-            CaptureString.HiddenOwnerTitle => "HDR SDR Capture",
-            CaptureString.PreviewTitle => "Предпросмотр HDR SDR",
-            CaptureString.SaveDialogTitle => "Сохранить снимок",
-            CaptureString.PngFilter => "PNG-изображение|*.png",
-            CaptureString.ToolMarkerHint => "Рамка: перетащите, чтобы добавить красную рамку",
-            CaptureString.ToolMosaicHint => "Мозаика: перетащите, чтобы скрыть важную область",
-            CaptureString.UndoHint => "Отменить последний шаг",
-            CaptureString.ResetHint => "Сбросить правки",
-            CaptureString.PresetLowHint => "Эффект: низкий",
-            CaptureString.PresetBalancedHint => "Эффект: сбалансированный",
-            CaptureString.PresetHighHint => "Эффект: высокий",
-            CaptureString.SaveAsFileHint => "Сохранить как файл",
-            CaptureString.CancelCloseHint => "Отменить и закрыть",
-            CaptureString.DoneCopyCloseHint => "Скопировать и закрыть",
-            CaptureString.DoneButton => "Готово",
-            CaptureString.PresetLow => "Низкий",
-            CaptureString.PresetBalanced => "Баланс",
-            CaptureString.PresetHigh => "Высокий",
-            CaptureString.StatusPreset => "Эффект: {0}.",
-            CaptureString.MarkerModeStatus => "Режим рамки: перетащите по изображению, чтобы добавить красную рамку.",
-            CaptureString.MosaicModeStatus => "Режим мозаики: перетащите по изображению, чтобы скрыть важное содержимое.",
-            CaptureString.ReadyStatus => "Можно сразу скопировать или сначала выбрать инструмент для пометок.",
-            CaptureString.SavedStatus => "Сохранено в файл.",
-            CaptureString.CopiedStatus => "Скопировано в буфер обмена.",
-            CaptureString.CopyFailedPrefix => "Не удалось скопировать: ",
-            CaptureString.NoUndoStatus => "Нет пометок для отмены.",
-            CaptureString.UndoneStatus => "Последняя пометка отменена.",
-            CaptureString.ResetStatus => "Сброшено.",
-            CaptureString.AddedMarkerStatus => "Красная рамка добавлена. Продолжайте пометки или нажмите «Готово».",
-            CaptureString.AddedMosaicStatus => "Мозаика добавлена. Продолжайте скрывать содержимое или нажмите «Готово».",
-            CaptureString.SelectHint => "Перетащите, чтобы выбрать область; Esc — отмена",
-            CaptureString.ToolbarCancel => "Отмена",
-            CaptureString.ToolbarMarker => "Прямоугольник",
-            CaptureString.ToolbarEllipse => "Эллипс",
-            CaptureString.ToolbarPen => "Перо",
-            CaptureString.ToolbarMosaic => "Мозаика",
-            CaptureString.ToolbarColor => "Изменить цвет пометки",
-            CaptureString.ToolbarUndo => "Отменить (Ctrl+Z)",
-            CaptureString.ToolbarRedo => "Повторить (Ctrl+Y)",
-            CaptureString.ToolbarReset => "Сброс",
-            CaptureString.ToolbarHdrLow => "Яркость HDR: низкая",
-            CaptureString.ToolbarHdrBalanced => "Яркость HDR: баланс",
-            CaptureString.ToolbarHdrHigh => "Яркость HDR: высокая",
-            CaptureString.ToolbarSave => "Сохранить в файл",
-            CaptureString.ToolbarCopy => "Копировать в буфер обмена",
-            CaptureString.ProcessingStatus => "Захват…",
-            _ => string.Empty
-        };
-
-        private static string De(CaptureString id) => id switch
-        {
-            CaptureString.HiddenOwnerTitle => "HDR SDR Aufnahme",
-            CaptureString.PreviewTitle => "HDR SDR Aufnahmevorschau",
-            CaptureString.SaveDialogTitle => "Screenshot speichern",
-            CaptureString.PngFilter => "PNG-Bild|*.png",
-            CaptureString.ToolMarkerHint => "Rahmen: ziehen, um einen roten Rahmen hinzuzufügen",
-            CaptureString.ToolMosaicHint => "Mosaik: ziehen, um sensible Bereiche zu verdecken",
-            CaptureString.UndoHint => "Letzten Schritt rückgängig machen",
-            CaptureString.ResetHint => "Bearbeitungen zurücksetzen",
-            CaptureString.PresetLowHint => "Effekt: Niedrig",
-            CaptureString.PresetBalancedHint => "Effekt: Ausgewogen",
-            CaptureString.PresetHighHint => "Effekt: Hoch",
-            CaptureString.SaveAsFileHint => "Als Datei speichern",
-            CaptureString.CancelCloseHint => "Abbrechen und schließen",
-            CaptureString.DoneCopyCloseHint => "Kopieren und schließen",
-            CaptureString.DoneButton => "Fertig",
-            CaptureString.PresetLow => "Niedrig",
-            CaptureString.PresetBalanced => "Ausgewogen",
-            CaptureString.PresetHigh => "Hoch",
-            CaptureString.StatusPreset => "Effekt: {0}.",
-            CaptureString.MarkerModeStatus => "Rahmenmodus: Auf dem Bild ziehen, um einen roten Rahmen hinzuzufügen.",
-            CaptureString.MosaicModeStatus => "Mosaikmodus: Auf dem Bild ziehen, um sensible Inhalte zu verdecken.",
-            CaptureString.ReadyStatus => "Direkt kopieren oder zuerst ein Werkzeug zum Markieren wählen.",
-            CaptureString.SavedStatus => "In Datei gespeichert.",
-            CaptureString.CopiedStatus => "In die Zwischenablage kopiert.",
-            CaptureString.CopyFailedPrefix => "Kopieren fehlgeschlagen: ",
-            CaptureString.NoUndoStatus => "Keine Markierung zum Rückgängigmachen.",
-            CaptureString.UndoneStatus => "Letzte Markierung rückgängig gemacht.",
-            CaptureString.ResetStatus => "Zurückgesetzt.",
-            CaptureString.AddedMarkerStatus => "Roter Rahmen hinzugefügt. Weiter markieren oder auf Fertig klicken.",
-            CaptureString.AddedMosaicStatus => "Mosaik hinzugefügt. Weiter verdecken oder auf Fertig klicken.",
-            CaptureString.SelectHint => "Ziehen, um einen Bereich auszuwählen; Esc zum Abbrechen",
-            CaptureString.ToolbarCancel => "Abbrechen",
-            CaptureString.ToolbarMarker => "Rechteckmarkierung",
-            CaptureString.ToolbarEllipse => "Ellipsenmarkierung",
-            CaptureString.ToolbarPen => "Stiftmarkierung",
-            CaptureString.ToolbarMosaic => "Mosaik",
-            CaptureString.ToolbarColor => "Markierungsfarbe ändern",
-            CaptureString.ToolbarUndo => "Rückgängig (Ctrl+Z)",
-            CaptureString.ToolbarRedo => "Wiederholen (Ctrl+Y)",
-            CaptureString.ToolbarReset => "Zurücksetzen",
-            CaptureString.ToolbarHdrLow => "HDR-Helligkeit: niedrig",
-            CaptureString.ToolbarHdrBalanced => "HDR-Helligkeit: ausgewogen",
-            CaptureString.ToolbarHdrHigh => "HDR-Helligkeit: hoch",
-            CaptureString.ToolbarSave => "In Datei speichern",
-            CaptureString.ToolbarCopy => "In Zwischenablage kopieren",
-            CaptureString.ProcessingStatus => "Erfasse…",
-            _ => string.Empty
-        };
-    }
-
     private static string ResolveOutputPath(string[] args)
     {
-        string? requested = ArgValue(args, "--output");
+        string? requested = CaptureArgs.Value(args, "--output");
         if (!string.IsNullOrWhiteSpace(requested))
         {
             return Path.GetFullPath(Environment.ExpandEnvironmentVariables(requested));
@@ -1024,37 +388,6 @@ internal static class Program
         return await picker.PickSingleItemAsync();
     }
 
-    private static GraphicsCaptureItem CreateItemForPrimaryMonitor()
-    {
-        nint monitor = MonitorFromWindow(GetDesktopWindow(), 1);
-        if (monitor == 0)
-        {
-            throw new InvalidOperationException("Could not resolve primary monitor handle.");
-        }
-
-        nint className = 0;
-        nint factoryPtr = 0;
-        nint itemPtr = 0;
-        try
-        {
-            int hr = WindowsCreateString("Windows.Graphics.Capture.GraphicsCaptureItem", 44, out className);
-            ThrowIfFailed(hr, "WindowsCreateString(GraphicsCaptureItem)");
-            Guid factoryIid = IidGraphicsCaptureItemInterop;
-            hr = RoGetActivationFactory(className, ref factoryIid, out factoryPtr);
-            ThrowIfFailed(hr, "RoGetActivationFactory(GraphicsCaptureItem)");
-
-            IGraphicsCaptureItemInterop interop = (IGraphicsCaptureItemInterop)Marshal.GetObjectForIUnknown(factoryPtr);
-            interop.CreateForMonitor(monitor, IidGraphicsCaptureItem, out itemPtr);
-            return MarshalInterface<GraphicsCaptureItem>.FromAbi(itemPtr);
-        }
-        finally
-        {
-            if (itemPtr != 0) Marshal.Release(itemPtr);
-            if (factoryPtr != 0) Marshal.Release(factoryPtr);
-            if (className != 0) WindowsDeleteString(className);
-        }
-    }
-
     private static async Task<int> CaptureOneFrameAsync(
         GraphicsCaptureItem item,
         IDirect3DDevice device,
@@ -1075,7 +408,7 @@ internal static class Program
             ReadbackResult result;
             try
             {
-                result = await CaptureFrameAsync(item, device, native, requestedFormat, toneMap, diagnostic);
+                result = await WgcCapture.CaptureFrameAsync(item, device, native, requestedFormat, toneMap, diagnostic);
             }
             catch (TimeoutException)
             {
@@ -1107,15 +440,12 @@ internal static class Program
 
         if (selectRegion)
         {
-            Task<ReadbackResult> regionCaptureTask = Task.Run(async () =>
-            {
-                using CapturedGpuFrame gpuFrame = await CaptureGpuFrameAsync(item, device, requestedFormat);
-                return native.ReadbackTexture(gpuFrame.Texture, toneMap, diagnostic);
-            });
+            Task<ReadbackResult> regionCaptureTask = Task.Run(() =>
+                WgcCapture.CaptureFrameAsync(item, device, native, requestedFormat, toneMap, diagnostic));
             return await SelectAndCommitRegionAsync(regionCaptureTask, outputPath, diagnostic);
         }
 
-        Task<ReadbackResult> captureTask = Task.Run(() => CaptureFrameAsync(item, device, native, requestedFormat, toneMap, diagnostic));
+        Task<ReadbackResult> captureTask = Task.Run(() => WgcCapture.CaptureFrameAsync(item, device, native, requestedFormat, toneMap, diagnostic));
         ReadbackResult fullResult;
         try
         {
@@ -1164,39 +494,13 @@ internal static class Program
     {
         Task<ReadbackResult> captureTask = Task.Run(async () =>
         {
-            using RegionCaptureSource captureSource = await CapturePrimaryMonitorGpuFrameAsync(requestedFormat);
+            using RegionCaptureSource captureSource = await WgcCapture.CapturePrimaryMonitorGpuFrameAsync(requestedFormat);
             return captureSource.Runtime.Native.ReadbackTexture(
                 captureSource.GpuFrame.Texture,
                 toneMap,
                 diagnostic);
         });
         return await SelectAndCommitRegionAsync(captureTask, outputPath, diagnostic);
-    }
-
-    private static async Task<ReadbackResult> CapturePrimaryMonitorFrameAsync(
-        DirectXPixelFormat requestedFormat,
-        ToneMapOptions toneMap,
-        bool diagnostic)
-    {
-        using NativeD3D native = NativeD3D.Create();
-        IDirect3DDevice? winrtDevice = null;
-        GraphicsCaptureItem? item = null;
-        try
-        {
-            winrtDevice = native.CreateWinRtDevice();
-            Console.WriteLine("Using primary monitor capture item.");
-            var access = await GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Programmatic);
-            Console.WriteLine($"Programmatic capture access: {access}");
-            item = CreateItemForPrimaryMonitor();
-            Console.WriteLine($"Selected: {item.DisplayName}");
-            Console.WriteLine($"Item size: {item.Size.Width} x {item.Size.Height}");
-            return await CaptureFrameAsync(item, winrtDevice, native, requestedFormat, toneMap, diagnostic);
-        }
-        finally
-        {
-            DisposeIfPossible(winrtDevice);
-            DisposeIfPossible(item);
-        }
     }
 
     private static async Task<int> SelectAndCommitRegionAsync(
@@ -1336,92 +640,6 @@ internal static class Program
         return bitmap;
     }
 
-    private static async Task<ReadbackResult> CaptureFrameAsync(
-        GraphicsCaptureItem item,
-        IDirect3DDevice device,
-        NativeD3D native,
-        DirectXPixelFormat requestedFormat,
-        ToneMapOptions toneMap,
-        bool diagnostic,
-        System.Drawing.Rectangle? readbackRegion = null)
-    {
-        using CapturedGpuFrame gpuFrame = await CaptureGpuFrameAsync(item, device, requestedFormat);
-        ReadbackResult result = native.ReadbackTexture(gpuFrame.Texture, toneMap, diagnostic, readbackRegion);
-        if (diagnostic)
-        {
-            Direct3DSurfaceDescription surfaceDesc = gpuFrame.Surface.Description;
-            Console.WriteLine($"Frame content size: {gpuFrame.ContentSize.Width} x {gpuFrame.ContentSize.Height}");
-            Console.WriteLine($"Surface desc: {surfaceDesc.Width} x {surfaceDesc.Height}, format {surfaceDesc.Format}");
-            result.PrintStats();
-        }
-        return result;
-    }
-
-    private static async Task<CapturedGpuFrame> CaptureGpuFrameAsync(
-        GraphicsCaptureItem item,
-        IDirect3DDevice device,
-        DirectXPixelFormat requestedFormat)
-    {
-        Direct3D11CaptureFramePool? pool = null;
-        GraphicsCaptureSession? session = null;
-        Direct3D11CaptureFrame? frame = null;
-        try
-        {
-            pool = Direct3D11CaptureFramePool.CreateFreeThreaded(device, requestedFormat, 1, item.Size);
-            session = pool.CreateCaptureSession(item);
-            try
-            {
-                session.IsCursorCaptureEnabled = false;
-                session.IsBorderRequired = false;
-            }
-            catch
-            {
-            }
-
-            TaskCompletionSource<Direct3D11CaptureFrame> frameReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            TypedEventHandler<Direct3D11CaptureFramePool, object> handler = (sender, _) =>
-            {
-                Direct3D11CaptureFrame? f = sender.TryGetNextFrame();
-                if (f is not null && !frameReady.TrySetResult(f))
-                {
-                    f.Dispose();
-                }
-            };
-            pool.FrameArrived += handler;
-            session.StartCapture();
-
-            try
-            {
-                Task completed = await Task.WhenAny(frameReady.Task, Task.Delay(TimeSpan.FromSeconds(10)));
-                if (completed != frameReady.Task)
-                {
-                    throw new TimeoutException();
-                }
-                frame = await frameReady.Task;
-                pool.FrameArrived -= handler;
-            }
-            catch
-            {
-                pool.FrameArrived -= handler;
-                throw;
-            }
-
-            nint texture = GetTextureFromSurface(frame.Surface);
-            CapturedGpuFrame result = new(texture, frame, pool, session);
-            frame = null;
-            pool = null;
-            session = null;
-            return result;
-        }
-        catch
-        {
-            frame?.Dispose();
-            session?.Dispose();
-            pool?.Dispose();
-            throw;
-        }
-    }
-
     private static string? PromptSaveAsPath(string defaultOutputPath)
     {
         string? selectedPath = null;
@@ -1448,27 +666,11 @@ internal static class Program
         return selectedPath;
     }
 
-    private static nint GetTextureFromSurface(IDirect3DSurface surface)
-    {
-        IDirect3DDxgiInterfaceAccess access = surface.As<IDirect3DDxgiInterfaceAccess>();
-        access.GetInterface(IidId3d11Texture2D, out nint texture);
-        if (texture == 0)
-        {
-            throw new InvalidOperationException("IDirect3DSurface did not expose ID3D11Texture2D.");
-        }
-        return texture;
-    }
-
     private static async Task SavePngAsync(string path, uint width, uint height, byte[] bgra)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        await using (File.Create(path)) { }
-
-        StorageFile file = await StorageFile.GetFileFromPathAsync(path);
-        using Windows.Storage.Streams.IRandomAccessStream stream = await file.OpenAsync(FileAccessMode.ReadWrite);
-        BitmapEncoder encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
-        encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore, width, height, 96.0, 96.0, bgra);
-        await encoder.FlushAsync();
+        using Bitmap bitmap = CreateBitmapFromBgra(width, height, bgra);
+        await Task.Run(() => bitmap.Save(path, ImageFormat.Png));
     }
 
     private static Task SaveFullscreenEditImageAsync(string path, uint width, uint height, byte[] bgra)
@@ -1712,9 +914,9 @@ internal static class Program
                     g *= scale;
                     b *= scale;
                 }
-                bgra[index] = ToByte(b);
-                bgra[index + 1] = ToByte(g);
-                bgra[index + 2] = ToByte(r);
+                bgra[index] = PixelMath.ToByte(b);
+                bgra[index + 1] = PixelMath.ToByte(g);
+                bgra[index + 2] = PixelMath.ToByte(r);
             }
         }
     }
@@ -3446,9 +2648,9 @@ internal static class Program
                         }
 
                         byte* dst = outputRow + x * 4;
-                        dst[0] = ToByte(b);
-                        dst[1] = ToByte(g);
-                        dst[2] = ToByte(r);
+                        dst[0] = PixelMath.ToByte(b);
+                        dst[1] = PixelMath.ToByte(g);
+                        dst[2] = PixelMath.ToByte(r);
                         dst[3] = 255;
                     }
                 }
@@ -5036,17 +4238,6 @@ internal static class Program
         }
     }
 
-    private static string FormatName(uint format) => format switch
-    {
-        DxgiFormatR16G16B16A16Float => "R16G16B16A16_FLOAT",
-        DxgiFormatR10G10B10A2Unorm => "R10G10B10A2_UNORM",
-        DxgiFormatR8G8B8A8Unorm => "R8G8B8A8_UNORM",
-        DxgiFormatR8G8B8A8UnormSrgb => "R8G8B8A8_UNORM_SRGB",
-        DxgiFormatB8G8R8A8Unorm => "B8G8R8A8_UNORM",
-        DxgiFormatB8G8R8A8UnormSrgb => "B8G8R8A8_UNORM_SRGB",
-        _ => $"FORMAT_{format}"
-    };
-
     private static void ApplyDarkWindowFrame(nint hwnd)
     {
         if (hwnd == 0) return;
@@ -5068,45 +4259,11 @@ internal static class Program
         return color.R | (color.G << 8) | (color.B << 16);
     }
 
-    [DllImport("d3d11.dll")]
-    private static extern int D3D11CreateDevice(
-        nint adapter,
-        uint driverType,
-        nint software,
-        uint flags,
-        uint[] featureLevels,
-        uint featureLevelCount,
-        uint sdkVersion,
-        out nint device,
-        out uint createdFeatureLevel,
-        out nint immediateContext);
-
-    [DllImport("d3d11.dll")]
-    private static extern int CreateDirect3D11DeviceFromDXGIDevice(nint dxgiDevice, out nint graphicsDevice);
-
-    [DllImport("combase.dll")]
-    private static extern int WindowsCreateString(
-        [MarshalAs(UnmanagedType.LPWStr)] string sourceString,
-        int length,
-        out nint hstring);
-
-    [DllImport("combase.dll")]
-    private static extern int WindowsDeleteString(nint hstring);
-
-    [DllImport("combase.dll")]
-    private static extern int RoGetActivationFactory(nint activatableClassId, ref Guid iid, out nint factory);
-
-    [DllImport("user32.dll")]
-    private static extern nint GetDesktopWindow();
-
     [DllImport("user32.dll")]
     private static extern nint GetForegroundWindow();
 
     [DllImport("user32.dll")]
     private static extern bool IsWindow(nint hwnd);
-
-    [DllImport("user32.dll")]
-    private static extern nint MonitorFromWindow(nint hwnd, uint flags);
 
     [DllImport("user32.dll")]
     private static extern bool SetWindowDisplayAffinity(nint hwnd, uint affinity);
@@ -5129,720 +4286,12 @@ internal static class Program
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(nint hwnd, int attribute, ref int attributeValue, int attributeSize);
 
-    [DllImport("user32.dll")]
-    private static extern uint GetDisplayConfigBufferSizes(uint flags, out uint numPathArrayElements, out uint numModeInfoArrayElements);
-
-    [DllImport("user32.dll")]
-    private static extern uint QueryDisplayConfig(
-        uint flags,
-        ref uint numPathArrayElements,
-        [Out] DisplayConfigPathInfo[] pathInfoArray,
-        ref uint numModeInfoArrayElements,
-        [Out] DisplayConfigModeInfo[] modeInfoArray,
-        nint currentTopologyId);
-
-    [DllImport("user32.dll", EntryPoint = "DisplayConfigGetDeviceInfo")]
-    private static extern uint DisplayConfigGetDeviceInfo(ref DisplayConfigSdrWhiteLevel requestPacket);
-
-    [ComImport]
-    [Guid("A9B3D012-3DF2-4EE3-B8D1-8695F457D3C1")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IDirect3DDxgiInterfaceAccess
-    {
-        void GetInterface(in Guid iid, out nint p);
-    }
-
-    [ComImport]
-    [Guid("3628E81B-3CAC-4C60-B7F4-23CE0E0C3356")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IGraphicsCaptureItemInterop
-    {
-        void CreateForWindow(nint window, in Guid iid, out nint result);
-        void CreateForMonitor(nint monitor, in Guid iid, out nint result);
-    }
-
-    private sealed class CapturedGpuFrame : IDisposable
-    {
-        private readonly nint texture;
-        private readonly Direct3D11CaptureFrame frame;
-        private readonly Direct3D11CaptureFramePool pool;
-        private readonly GraphicsCaptureSession session;
-
-        public nint Texture => texture;
-        public Windows.Graphics.SizeInt32 ContentSize => frame.ContentSize;
-        public IDirect3DSurface Surface => frame.Surface;
-
-        public CapturedGpuFrame(nint texture, Direct3D11CaptureFrame frame, Direct3D11CaptureFramePool pool, GraphicsCaptureSession session)
-        {
-            this.texture = texture;
-            this.frame = frame;
-            this.pool = pool;
-            this.session = session;
-        }
-
-        public void Dispose()
-        {
-            Marshal.Release(texture);
-            frame.Dispose();
-            pool.Dispose();
-            session.Dispose();
-        }
-    }
-
-    private sealed class NativeD3D : IDisposable
-    {
-        private readonly nint device;
-        private readonly nint context;
-
-        private NativeD3D(nint device, nint context)
-        {
-            this.device = device;
-            this.context = context;
-        }
-
-        public static NativeD3D Create()
-        {
-            uint[] featureLevels = { 0xb100, 0xb000 };
-            int hr = D3D11CreateDevice(
-                0,
-                D3dDriverTypeHardware,
-                0,
-                D3d11CreateDeviceBgraSupport,
-                featureLevels,
-                (uint)featureLevels.Length,
-                D3d11SdkVersion,
-                out nint device,
-                out uint createdFeatureLevel,
-                out nint context);
-            ThrowIfFailed(hr, "D3D11CreateDevice");
-            Console.WriteLine($"D3D feature level: 0x{createdFeatureLevel:x}");
-            return new NativeD3D(device, context);
-        }
-
-        public IDirect3DDevice CreateWinRtDevice()
-        {
-            Guid iid = IidIdxgiDevice;
-            int hr = Marshal.QueryInterface(device, ref iid, out nint dxgiDevice);
-            ThrowIfFailed(hr, "ID3D11Device::QueryInterface(IDXGIDevice)");
-
-            try
-            {
-                hr = CreateDirect3D11DeviceFromDXGIDevice(dxgiDevice, out nint graphicsDevice);
-                ThrowIfFailed(hr, "CreateDirect3D11DeviceFromDXGIDevice");
-                try
-                {
-                    return MarshalInterface<IDirect3DDevice>.FromAbi(graphicsDevice);
-                }
-                finally
-                {
-                    Marshal.Release(graphicsDevice);
-                }
-            }
-            finally
-            {
-                Marshal.Release(dxgiDevice);
-            }
-        }
-
-        public unsafe ReadbackResult ReadbackTexture(nint texture, ToneMapOptions toneMap, bool diagnostic, System.Drawing.Rectangle? readbackRegion = null)
-        {
-            D3d11Texture2dDesc desc = default;
-            GetTextureDesc(texture, ref desc);
-            if (diagnostic)
-            {
-                Console.WriteLine($"Native texture desc: {desc.Width} x {desc.Height}, format {FormatName(desc.Format)} ({desc.Format})");
-            }
-
-            System.Drawing.Rectangle region = readbackRegion ?? new System.Drawing.Rectangle(0, 0, checked((int)desc.Width), checked((int)desc.Height));
-            region.Intersect(new System.Drawing.Rectangle(0, 0, checked((int)desc.Width), checked((int)desc.Height)));
-            if (region.Width <= 0 || region.Height <= 0)
-            {
-                throw new InvalidOperationException("Selected readback region is empty.");
-            }
-
-            D3d11Texture2dDesc stagingDesc = desc;
-            stagingDesc.Width = checked((uint)region.Width);
-            stagingDesc.Height = checked((uint)region.Height);
-            stagingDesc.Usage = D3d11UsageStaging;
-            stagingDesc.BindFlags = 0;
-            stagingDesc.CPUAccessFlags = D3d11CpuAccessRead;
-            stagingDesc.MiscFlags = 0;
-
-            nint staging = 0;
-            int hr = CreateTexture2D(device, ref stagingDesc, 0, out staging);
-            ThrowIfFailed(hr, "ID3D11Device::CreateTexture2D(staging)");
-
-            try
-            {
-                if (region.X == 0 && region.Y == 0 && region.Width == desc.Width && region.Height == desc.Height)
-                {
-                    CopyResource(context, staging, texture);
-                }
-                else
-                {
-                    D3d11Box sourceBox = new()
-                    {
-                        Left = checked((uint)region.Left),
-                        Top = checked((uint)region.Top),
-                        Front = 0,
-                        Right = checked((uint)region.Right),
-                        Bottom = checked((uint)region.Bottom),
-                        Back = 1
-                    };
-                    CopySubresourceRegion(context, staging, 0, 0, 0, 0, texture, 0, ref sourceBox);
-                }
-                D3d11MappedSubresource mapped = default;
-                hr = Map(context, staging, 0, D3d11MapRead, 0, out mapped);
-                ThrowIfFailed(hr, "ID3D11DeviceContext::Map");
-
-                try
-                {
-                    PixelStats stats = diagnostic
-                        ? PixelStats.FromMapped(mapped.Data, mapped.RowPitch, desc.Format, stagingDesc.Width, stagingDesc.Height)
-                        : default;
-                    byte[] bgra = ConvertToBgra(mapped.Data, mapped.RowPitch, desc.Format, stagingDesc.Width, stagingDesc.Height, toneMap);
-                    return new ReadbackResult(stagingDesc.Width, stagingDesc.Height, desc.Format, stats, bgra);
-                }
-                finally
-                {
-                    Unmap(context, staging, 0);
-                }
-            }
-            finally
-            {
-                if (staging != 0)
-                {
-                    Marshal.Release(staging);
-                }
-            }
-        }
-
-        public void Dispose()
-        {
-            if (context != 0) Marshal.Release(context);
-            if (device != 0) Marshal.Release(device);
-        }
-    }
-
-    private sealed record ReadbackResult(uint Width, uint Height, uint Format, PixelStats Stats, byte[] Bgra)
-    {
-        public void PrintStats()
-        {
-            Console.WriteLine($"Sample R min/avg/max: {Stats.MinR:F6} / {Stats.AvgR:F6} / {Stats.MaxR:F6}");
-            Console.WriteLine($"Sample G min/avg/max: {Stats.MinG:F6} / {Stats.AvgG:F6} / {Stats.MaxG:F6}");
-            Console.WriteLine($"Sample B min/avg/max: {Stats.MinB:F6} / {Stats.AvgB:F6} / {Stats.MaxB:F6}");
-            if (Format == DxgiFormatR16G16B16A16Float)
-            {
-                Console.WriteLine(Stats.MaxR > 1.0 || Stats.MaxG > 1.0 || Stats.MaxB > 1.0
-                    ? "HDR signal: sampled float values exceed 1.0."
-                    : "No sampled HDR headroom: float values did not exceed 1.0.");
-            }
-        }
-    }
-
-    private readonly record struct PixelStats(
-        double MinR,
-        double AvgR,
-        double MaxR,
-        double MinG,
-        double AvgG,
-        double MaxG,
-        double MinB,
-        double AvgB,
-        double MaxB)
-    {
-        public static unsafe PixelStats FromMapped(nint data, uint rowPitch, uint format, uint width, uint height)
-        {
-            double minR = double.MaxValue, minG = double.MaxValue, minB = double.MaxValue;
-            double maxR = double.MinValue, maxG = double.MinValue, maxB = double.MinValue;
-            double sumR = 0.0, sumG = 0.0, sumB = 0.0;
-            ulong count = 0;
-            uint stepX = Math.Max(1, width / 256);
-            uint stepY = Math.Max(1, height / 144);
-
-            for (uint y = 0; y < height; y += stepY)
-            {
-                byte* row = (byte*)data + rowPitch * y;
-                for (uint x = 0; x < width; x += stepX)
-                {
-                    (double r, double g, double b) = ReadRgb(row, x, format);
-                    minR = Math.Min(minR, r);
-                    minG = Math.Min(minG, g);
-                    minB = Math.Min(minB, b);
-                    maxR = Math.Max(maxR, r);
-                    maxG = Math.Max(maxG, g);
-                    maxB = Math.Max(maxB, b);
-                    sumR += r;
-                    sumG += g;
-                    sumB += b;
-                    count++;
-                }
-            }
-
-            if (count == 0) count = 1;
-            return new PixelStats(minR, sumR / count, maxR, minG, sumG / count, maxG, minB, sumB / count, maxB);
-        }
-    }
-
-    private readonly record struct ToneMapOptions(string Mode, float SdrWhite, float SdrOutputWhite, float HdrKnee, float HdrShoulder, float Exposure)
-    {
-        public static ToneMapOptions FromArgs(string[] args)
-        {
-            string mode = ArgValue(args, "--tone-map") ?? "desktop";
-            string? sdrWhiteArg = ArgValue(args, "--sdr-white");
-            float detectedSdrWhite = DetectCurrentSdrWhite(3.0f);
-            float sdrWhite = !string.IsNullOrWhiteSpace(sdrWhiteArg)
-                ? Math.Clamp(ArgFloat(args, "--sdr-white", detectedSdrWhite), 0.1f, 10.0f)
-                : detectedSdrWhite;
-            float sdrOutputWhite = Math.Clamp(ArgFloat(args, "--sdr-output-white", 1.0f), 0.5f, 1.0f);
-            float hdrKnee = Math.Clamp(ArgFloat(args, "--hdr-knee", 0.55f), 0.1f, 1.0f);
-            float hdrShoulder = Math.Clamp(ArgFloat(args, "--hdr-shoulder", 5.0f), 0.1f, 10.0f);
-            float exposure = Math.Clamp(ArgFloat(args, "--exposure", 0.75f), 0.1f, 2.0f);
-            Console.WriteLine($"Tone map: {mode}, SDR white {sdrWhite:F2}, SDR output white {sdrOutputWhite:F2}, HDR knee {hdrKnee:F2}, HDR shoulder {hdrShoulder:F2}, exposure {exposure:F2}");
-            return new ToneMapOptions(mode, sdrWhite, sdrOutputWhite, hdrKnee, hdrShoulder, exposure);
-        }
-    }
-
-    private static float DetectCurrentSdrWhite(float fallback)
-    {
-        uint status = GetDisplayConfigBufferSizes(QdcOnlyActivePaths, out uint pathCount, out uint modeCount);
-        if (status != ErrorSuccess || pathCount == 0) return fallback;
-
-        for (int attempt = 0; attempt < 4; attempt++)
-        {
-            DisplayConfigPathInfo[] paths = new DisplayConfigPathInfo[pathCount];
-            DisplayConfigModeInfo[] modes = new DisplayConfigModeInfo[Math.Max(1, modeCount)];
-            uint queryPathCount = pathCount;
-            uint queryModeCount = modeCount;
-            status = QueryDisplayConfig(QdcOnlyActivePaths, ref queryPathCount, paths, ref queryModeCount, modes, nint.Zero);
-            if (status == ErrorInsufficientBuffer)
-            {
-                status = GetDisplayConfigBufferSizes(QdcOnlyActivePaths, out pathCount, out modeCount);
-                if (status != ErrorSuccess) return fallback;
-                continue;
-            }
-            if (status != ErrorSuccess) return fallback;
-
-            for (int i = 0; i < queryPathCount; i++)
-            {
-                DisplayConfigSdrWhiteLevel info = new()
-                {
-                    Header = new DisplayConfigDeviceInfoHeader
-                    {
-                        Type = DisplayConfigGetSdrWhiteLevel,
-                        Size = (uint)Marshal.SizeOf<DisplayConfigSdrWhiteLevel>(),
-                        AdapterId = paths[i].TargetInfo.AdapterId,
-                        Id = paths[i].TargetInfo.Id
-                    }
-                };
-
-                if (DisplayConfigGetDeviceInfo(ref info) == ErrorSuccess && info.SdrWhiteLevel > 0)
-                {
-                    float value = Math.Clamp(info.SdrWhiteLevel / 1000.0f, 0.1f, 10.0f);
-                    Console.WriteLine($"Detected SDR white level: {info.SdrWhiteLevel} ({value:F2} scRGB)");
-                    return value;
-                }
-            }
-            break;
-        }
-
-        return fallback;
-    }
-
-    private static unsafe byte[] ConvertToBgra(nint data, uint rowPitch, uint format, uint width, uint height, ToneMapOptions toneMap)
-    {
-        byte[] output = new byte[checked((int)(width * height * 4))];
-        if (format == DxgiFormatR16G16B16A16Float)
-        {
-            ConvertR16FloatToBgra(data, rowPitch, width, height, toneMap, output);
-            return output;
-        }
-
-        fixed (byte* outputPtr = output)
-        {
-            for (uint y = 0; y < height; y++)
-            {
-                byte* src = (byte*)data + rowPitch * y;
-                byte* dst = outputPtr + width * y * 4;
-                for (uint x = 0; x < width; x++)
-                {
-                    byte* px = dst + x * 4;
-                    switch (format)
-                    {
-                        case DxgiFormatB8G8R8A8Unorm:
-                        case DxgiFormatB8G8R8A8UnormSrgb:
-                        {
-                            byte* s = src + x * 4;
-                            px[0] = s[0];
-                            px[1] = s[1];
-                            px[2] = s[2];
-                            px[3] = 255;
-                            break;
-                        }
-                        case DxgiFormatR8G8B8A8Unorm:
-                        case DxgiFormatR8G8B8A8UnormSrgb:
-                        {
-                            byte* s = src + x * 4;
-                            px[0] = s[2];
-                            px[1] = s[1];
-                            px[2] = s[0];
-                            px[3] = 255;
-                            break;
-                        }
-                        case DxgiFormatR10G10B10A2Unorm:
-                        {
-                            uint packed = ((uint*)src)[x];
-                            px[2] = ToByte((packed & 0x3ff) / 1023.0f);
-                            px[1] = ToByte(((packed >> 10) & 0x3ff) / 1023.0f);
-                            px[0] = ToByte(((packed >> 20) & 0x3ff) / 1023.0f);
-                            px[3] = 255;
-                            break;
-                        }
-                        case DxgiFormatR16G16B16A16Float:
-                        {
-                            px[0] = 0;
-                            px[1] = 0;
-                            px[2] = 0;
-                            px[3] = 255;
-                            break;
-                        }
-                        default:
-                            px[0] = 0;
-                            px[1] = 0;
-                            px[2] = 0;
-                            px[3] = 255;
-                            break;
-                    }
-                }
-            }
-        }
-        return output;
-    }
-
-    private static unsafe void ConvertR16FloatToBgra(nint data, uint rowPitch, uint width, uint height, ToneMapOptions toneMap, byte[] output)
-    {
-        ToneMapLookup lookup = new(toneMap);
-        int w = checked((int)width);
-        int h = checked((int)height);
-        fixed (byte* outputPtr = output)
-        {
-            nint sourceBase = data;
-            nint destinationBase = (nint)outputPtr;
-            Parallel.For(0, h, y =>
-            {
-                byte* src = (byte*)sourceBase + rowPitch * (uint)y;
-                byte* dst = (byte*)destinationBase + (nuint)(w * y * 4);
-                for (int x = 0; x < w; x++)
-                {
-                    ushort* s = (ushort*)(src + x * 8);
-                    byte* px = dst + x * 4;
-                    ToneMapPixel(HalfToSingle(s[0]), HalfToSingle(s[1]), HalfToSingle(s[2]), lookup, px);
-                    px[3] = 255;
-                }
-            });
-        }
-    }
-
-    private static unsafe (double R, double G, double B) ReadRgb(byte* row, uint x, uint format)
-    {
-        return format switch
-        {
-            DxgiFormatB8G8R8A8Unorm or DxgiFormatB8G8R8A8UnormSrgb =>
-                (row[x * 4 + 2] / 255.0, row[x * 4 + 1] / 255.0, row[x * 4] / 255.0),
-            DxgiFormatR8G8B8A8Unorm or DxgiFormatR8G8B8A8UnormSrgb =>
-                (row[x * 4] / 255.0, row[x * 4 + 1] / 255.0, row[x * 4 + 2] / 255.0),
-            DxgiFormatR10G10B10A2Unorm => ReadR10G10B10((uint*)row, x),
-            DxgiFormatR16G16B16A16Float => ReadFloat16(row, x),
-            _ => (0.0, 0.0, 0.0)
-        };
-    }
-
-    private static unsafe (double R, double G, double B) ReadR10G10B10(uint* row, uint x)
-    {
-        uint packed = row[x];
-        return ((packed & 0x3ff) / 1023.0, ((packed >> 10) & 0x3ff) / 1023.0, ((packed >> 20) & 0x3ff) / 1023.0);
-    }
-
-    private static unsafe (double R, double G, double B) ReadFloat16(byte* row, uint x)
-    {
-        ushort* pixel = (ushort*)(row + x * 8);
-        return (HalfToSingle(pixel[0]), HalfToSingle(pixel[1]), HalfToSingle(pixel[2]));
-    }
-
-    private static readonly float[] HalfFloatLookup = BuildHalfFloatLookup();
-
-    private static float[] BuildHalfFloatLookup()
-    {
-        float[] table = new float[ushort.MaxValue + 1];
-        for (int i = 0; i < table.Length; i++)
-        {
-            table[i] = (float)BitConverter.UInt16BitsToHalf((ushort)i);
-        }
-        return table;
-    }
-
-    private static float HalfToSingle(ushort value) => HalfFloatLookup[value];
-
-    private sealed class ToneMapLookup
-    {
-        private const int SrgbTableSize = 4096;
-        private const int LuminanceTableSize = 8192;
-        private const float MaxLuminance = 16.0f;
-        private readonly byte[] srgb = new byte[SrgbTableSize];
-        private readonly float[] mappedLuminance = new float[LuminanceTableSize];
-
-        public float Exposure { get; }
-
-        public ToneMapLookup(ToneMapOptions options)
-        {
-            Exposure = options.Exposure;
-            for (int i = 0; i < srgb.Length; i++)
-            {
-                srgb[i] = ToByte(LinearToSrgb(i / (float)(srgb.Length - 1)));
-            }
-
-            bool reinhard = string.Equals(options.Mode, "reinhard", StringComparison.OrdinalIgnoreCase);
-            for (int i = 0; i < mappedLuminance.Length; i++)
-            {
-                float value = i * MaxLuminance / (mappedLuminance.Length - 1);
-                mappedLuminance[i] = reinhard
-                    ? value / (1.0f + value)
-                    : ToneMapDesktop(value, options);
-            }
-        }
-
-        public byte ToSrgbByte(float value)
-        {
-            if (value <= 0.0f) return 0;
-            if (value >= 1.0f) return 255;
-            int index = (int)(value * (SrgbTableSize - 1) + 0.5f);
-            return srgb[index];
-        }
-
-        public float MapLuminance(float luminance)
-        {
-            if (luminance <= 0.0f) return 0.0f;
-            if (luminance >= MaxLuminance) return mappedLuminance[^1];
-            int index = (int)(luminance * (LuminanceTableSize - 1) / MaxLuminance + 0.5f);
-            return mappedLuminance[index];
-        }
-    }
-
-    private static unsafe void ToneMapPixel(float r, float g, float b, ToneMapLookup lookup, byte* bgra)
-    {
-        r = Math.Max(0.0f, r * lookup.Exposure);
-        g = Math.Max(0.0f, g * lookup.Exposure);
-        b = Math.Max(0.0f, b * lookup.Exposure);
-        float luminance = 0.2126f * r + 0.7152f * g + 0.0722f * b;
-        if (luminance <= 0.000001f)
-        {
-            bgra[0] = 0;
-            bgra[1] = 0;
-            bgra[2] = 0;
-            return;
-        }
-
-        float mappedLuminance = lookup.MapLuminance(luminance);
-        float scale = mappedLuminance / luminance;
-        bgra[2] = lookup.ToSrgbByte(r * scale);
-        bgra[1] = lookup.ToSrgbByte(g * scale);
-        bgra[0] = lookup.ToSrgbByte(b * scale);
-    }
-
-    private static float ToneMapDesktop(float value, ToneMapOptions options)
-    {
-        float kneeStart = Math.Clamp(options.SdrWhite * options.HdrKnee, 0.0f, options.SdrWhite);
-        float kneeOutput = kneeStart / options.SdrWhite * options.SdrOutputWhite;
-        if (value <= kneeStart)
-        {
-            return Math.Clamp(value / options.SdrWhite * options.SdrOutputWhite, 0.0f, 1.0f);
-        }
-
-        float over = (value - kneeStart) / options.HdrShoulder;
-        float highlight = 1.0f - MathF.Exp(-Math.Max(0.0f, over));
-        return Math.Clamp(kneeOutput + (1.0f - kneeOutput) * highlight, 0.0f, 1.0f);
-    }
-
-    private static float LinearToSrgb(float value)
-    {
-        value = Math.Clamp(value, 0.0f, 1.0f);
-        return value <= 0.0031308f
-            ? value * 12.92f
-            : 1.055f * MathF.Pow(value, 1.0f / 2.4f) - 0.055f;
-    }
-
-    private static byte ToByte(float value) => (byte)Math.Clamp((int)(value * 255.0f + 0.5f), 0, 255);
-
-    private static void ThrowIfFailed(int hr, string operation)
-    {
-        if (hr < 0)
-        {
-            Marshal.ThrowExceptionForHR(hr);
-            throw new UnreachableException(operation);
-        }
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct DxgiSampleDesc
-    {
-        public uint Count;
-        public uint Quality;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct D3d11Texture2dDesc
-    {
-        public uint Width;
-        public uint Height;
-        public uint MipLevels;
-        public uint ArraySize;
-        public uint Format;
-        public DxgiSampleDesc SampleDesc;
-        public uint Usage;
-        public uint BindFlags;
-        public uint CPUAccessFlags;
-        public uint MiscFlags;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct D3d11MappedSubresource
-    {
-        public nint Data;
-        public uint RowPitch;
-        public uint DepthPitch;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct D3d11Box
-    {
-        public uint Left;
-        public uint Top;
-        public uint Front;
-        public uint Right;
-        public uint Bottom;
-        public uint Back;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct Luid
-    {
-        public uint LowPart;
-        public int HighPart;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct DisplayConfigPathSourceInfo
-    {
-        public Luid AdapterId;
-        public uint Id;
-        public uint ModeInfoIdx;
-        public uint StatusFlags;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct DisplayConfigRational
-    {
-        public uint Numerator;
-        public uint Denominator;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct DisplayConfigPathTargetInfo
-    {
-        public Luid AdapterId;
-        public uint Id;
-        public uint ModeInfoIdx;
-        public uint OutputTechnology;
-        public uint Rotation;
-        public uint Scaling;
-        public DisplayConfigRational RefreshRate;
-        public uint ScanLineOrdering;
-        [MarshalAs(UnmanagedType.Bool)] public bool TargetAvailable;
-        public uint StatusFlags;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct DisplayConfigPathInfo
-    {
-        public DisplayConfigPathSourceInfo SourceInfo;
-        public DisplayConfigPathTargetInfo TargetInfo;
-        public uint Flags;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private unsafe struct DisplayConfigModeInfo
-    {
-        public uint InfoType;
-        public uint Id;
-        public Luid AdapterId;
-        public fixed byte ModeInfo[48];
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct DisplayConfigDeviceInfoHeader
-    {
-        public uint Type;
-        public uint Size;
-        public Luid AdapterId;
-        public uint Id;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct DisplayConfigSdrWhiteLevel
-    {
-        public DisplayConfigDeviceInfoHeader Header;
-        public uint SdrWhiteLevel;
-    }
-
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    private delegate void GetDescDelegate(nint self, ref D3d11Texture2dDesc desc);
-
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    private delegate int CreateTexture2DDelegate(nint self, ref D3d11Texture2dDesc desc, nint initialData, out nint texture);
-
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    private delegate void CopySubresourceRegionDelegate(
-        nint self,
-        nint destinationResource,
-        uint destinationSubresource,
-        uint destinationX,
-        uint destinationY,
-        uint destinationZ,
-        nint sourceResource,
-        uint sourceSubresource,
-        ref D3d11Box sourceBox);
-
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    private delegate void CopyResourceDelegate(nint self, nint destination, nint source);
-
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    private delegate int MapDelegate(nint self, nint resource, uint subresource, uint mapType, uint mapFlags, out D3d11MappedSubresource mapped);
-
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    private delegate void UnmapDelegate(nint self, nint resource, uint subresource);
-
-    private static unsafe T ComMethod<T>(nint unknown, int slot) where T : Delegate
-    {
-        nint vtable = *(nint*)unknown;
-        nint method = *((nint*)vtable + slot);
-        return Marshal.GetDelegateForFunctionPointer<T>(method);
-    }
-
-    private static void GetTextureDesc(nint texture, ref D3d11Texture2dDesc desc) =>
-        ComMethod<GetDescDelegate>(texture, 10)(texture, ref desc);
-
-    private static int CreateTexture2D(nint device, ref D3d11Texture2dDesc desc, nint initialData, out nint texture) =>
-        ComMethod<CreateTexture2DDelegate>(device, 5)(device, ref desc, initialData, out texture);
-
-    private static void CopySubresourceRegion(nint context, nint destination, uint destinationSubresource, uint destinationX, uint destinationY, uint destinationZ, nint source, uint sourceSubresource, ref D3d11Box sourceBox) =>
-        ComMethod<CopySubresourceRegionDelegate>(context, 46)(context, destination, destinationSubresource, destinationX, destinationY, destinationZ, source, sourceSubresource, ref sourceBox);
-
-    private static void CopyResource(nint context, nint destination, nint source) =>
-        ComMethod<CopyResourceDelegate>(context, 47)(context, destination, source);
-
-    private static int Map(nint context, nint resource, uint subresource, uint mapType, uint mapFlags, out D3d11MappedSubresource mapped) =>
-        ComMethod<MapDelegate>(context, 14)(context, resource, subresource, mapType, mapFlags, out mapped);
-
-    private static void Unmap(nint context, nint resource, uint subresource) =>
-        ComMethod<UnmapDelegate>(context, 15)(context, resource, subresource);
 }
+
+
+
+
+
+
+
+
