@@ -149,7 +149,7 @@ internal static class WgcCapture
             session = pool.CreateCaptureSession(item);
             try
             {
-                session.IsCursorCaptureEnabled = false;
+                TryDisableCursorCapture(session);
                 TryDisableCaptureBorder(session);
             }
             catch
@@ -202,6 +202,15 @@ internal static class WgcCapture
     private static void TryDisableCaptureBorder(GraphicsCaptureSession session)
     {
         System.Reflection.PropertyInfo? property = session.GetType().GetProperty("IsBorderRequired");
+        if (property?.CanWrite == true)
+        {
+            property.SetValue(session, false);
+        }
+    }
+
+    private static void TryDisableCursorCapture(GraphicsCaptureSession session)
+    {
+        System.Reflection.PropertyInfo? property = session.GetType().GetProperty("IsCursorCaptureEnabled");
         if (property?.CanWrite == true)
         {
             property.SetValue(session, false);
