@@ -1107,9 +1107,12 @@ internal static class Program
 
         if (selectRegion)
         {
-            Task<CapturedGpuFrame> regionTask = Task.Run(async () =>
-                await CaptureGpuFrameAsync(item, device, requestedFormat));
-            return await SelectAndCommitRegionAsync(regionTask, native, outputPath, toneMap, diagnostic);
+            Task<ReadbackResult> regionCaptureTask = Task.Run(async () =>
+            {
+                using CapturedGpuFrame gpuFrame = await CaptureGpuFrameAsync(item, device, requestedFormat);
+                return native.ReadbackTexture(gpuFrame.Texture, toneMap, diagnostic);
+            });
+            return await SelectAndCommitRegionAsync(regionCaptureTask, outputPath, diagnostic);
         }
 
         Task<ReadbackResult> captureTask = Task.Run(() => CaptureFrameAsync(item, device, native, requestedFormat, toneMap, diagnostic));
@@ -1159,9 +1162,15 @@ internal static class Program
         ToneMapOptions toneMap,
         bool diagnostic)
     {
-        Task<RegionCaptureSource> regionTask = Task.Run(async () =>
-            await CapturePrimaryMonitorGpuFrameAsync(requestedFormat));
-        return await SelectAndCommitRegionAsync(regionTask, outputPath, toneMap, diagnostic);
+        Task<ReadbackResult> captureTask = Task.Run(async () =>
+        {
+            using RegionCaptureSource captureSource = await CapturePrimaryMonitorGpuFrameAsync(requestedFormat);
+            return captureSource.Runtime.Native.ReadbackTexture(
+                captureSource.GpuFrame.Texture,
+                toneMap,
+                diagnostic);
+        });
+        return await SelectAndCommitRegionAsync(captureTask, outputPath, diagnostic);
     }
 
     private static async Task<ReadbackResult> CapturePrimaryMonitorFrameAsync(
@@ -1191,9 +1200,8 @@ internal static class Program
     }
 
     private static async Task<int> SelectAndCommitRegionAsync(
-        Task<RegionCaptureSource> regionTask,
+        Task<ReadbackResult> captureTask,
         string outputPath,
-        ToneMapOptions toneMap,
         bool diagnostic)
     {
         Bitmap previewBitmap;
@@ -1211,6 +1219,27 @@ internal static class Program
         RunSta(() =>
         {
             using RegionSelectionForm form = new(previewBitmap);
+            _ = captureTask.ContinueWith(t =>
+            {
+                if (!t.IsCompletedSuccessfully) return;
+                Bitmap hdrPreview = CreateBitmapFromBgra(t.Result.Width, t.Result.Height, t.Result.Bgra);
+                try
+                {
+                    form.BeginInvoke(() =>
+                    {
+                        if (form.IsDisposed)
+                        {
+                            hdrPreview.Dispose();
+                            return;
+                        }
+                        form.ReplacePreview(hdrPreview);
+                    });
+                }
+                catch
+                {
+                    hdrPreview.Dispose();
+                }
+            }, TaskScheduler.Default);
             selection = form.ShowDialog() == DialogResult.OK
                 ? new RegionSelectionForm.RegionSelectionResult(
                     form.SelectedImageRegion,
@@ -1222,15 +1251,11 @@ internal static class Program
 
         if (!selection.HasValue)
         {
-            if (regionTask.IsCompletedSuccessfully)
-            {
-                regionTask.Result.Dispose();
-            }
-            else if (regionTask.IsFaulted)
+            if (captureTask.IsFaulted)
             {
                 try
                 {
-                    await regionTask;
+                    await captureTask;
                 }
                 catch (TimeoutException)
                 {
@@ -1243,21 +1268,14 @@ internal static class Program
                     return 8;
                 }
             }
-            else
-            {
-                _ = regionTask.ContinueWith(t =>
-                {
-                    if (t.IsCompletedSuccessfully) t.Result.Dispose();
-                }, TaskScheduler.Default);
-            }
             Console.WriteLine("Region selection cancelled.");
             return 2;
         }
 
-        RegionCaptureSource captureSource;
+        ReadbackResult fullCapture;
         try
         {
-            captureSource = await regionTask;
+            fullCapture = await captureTask;
         }
         catch (TimeoutException)
         {
@@ -1270,115 +1288,7 @@ internal static class Program
             return 8;
         }
 
-        ReadbackResult result;
-        using (captureSource)
-        {
-            result = captureSource.Runtime.Native.ReadbackTexture(
-                captureSource.GpuFrame.Texture,
-                toneMap,
-                diagnostic,
-                selection.Value.Region);
-        }
-        if (diagnostic) result.PrintStats();
-
-        result = ApplySelectionEdits(result, selection.Value);
-        Console.WriteLine($"Selected region: {selection.Value.Region.X},{selection.Value.Region.Y} {selection.Value.Region.Width}x{selection.Value.Region.Height}");
-        if (selection.Value.Action == RegionSelectionForm.SelectionCommitAction.Copy)
-        {
-            RunSta(() => CopyBgraToClipboard(result.Width, result.Height, result.Bgra));
-            Console.WriteLine("Copied selected region to clipboard.");
-            return 0;
-        }
-
-        string? savePath = PromptSaveAsPath(outputPath);
-        if (string.IsNullOrWhiteSpace(savePath))
-        {
-            Console.WriteLine("Save cancelled.");
-            return 2;
-        }
-
-        try
-        {
-            await SavePngAsync(savePath, result.Width, result.Height, result.Bgra);
-            Console.WriteLine($"Saved PNG: {savePath}");
-            return 0;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Save failed: {ex.GetType().Name}: {ex.Message}");
-            return 8;
-        }
-    }
-
-    private static async Task<int> SelectAndCommitRegionAsync(
-        Task<CapturedGpuFrame> regionTask,
-        NativeD3D native,
-        string outputPath,
-        ToneMapOptions toneMap,
-        bool diagnostic)
-    {
-        Bitmap previewBitmap;
-        try
-        {
-            previewBitmap = CreateFastScreenPreviewBitmap();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Fast preview failed: {ex.GetType().Name}: {ex.Message}");
-            previewBitmap = new Bitmap(1, 1, PixelFormat.Format32bppArgb);
-        }
-
-        RegionSelectionForm.RegionSelectionResult? selection = null;
-        RunSta(() =>
-        {
-            using RegionSelectionForm form = new(previewBitmap);
-            selection = form.ShowDialog() == DialogResult.OK
-                ? new RegionSelectionForm.RegionSelectionResult(
-                    form.SelectedImageRegion,
-                    form.CommitAction,
-                    form.SelectedPreset,
-                    form.Operations)
-                : null;
-        });
-
-        if (!selection.HasValue)
-        {
-            if (regionTask.IsCompletedSuccessfully)
-            {
-                regionTask.Result.Dispose();
-            }
-            else
-            {
-                _ = regionTask.ContinueWith(t =>
-                {
-                    if (t.IsCompletedSuccessfully) t.Result.Dispose();
-                }, TaskScheduler.Default);
-            }
-            Console.WriteLine("Region selection cancelled.");
-            return 2;
-        }
-
-        CapturedGpuFrame gpuFrame;
-        try
-        {
-            gpuFrame = await regionTask;
-        }
-        catch (TimeoutException)
-        {
-            Console.WriteLine("Timed out waiting for a WGC frame.");
-            return 4;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Capture failed: {ex.GetType().Name}: {ex.Message}");
-            return 8;
-        }
-
-        ReadbackResult result;
-        using (gpuFrame)
-        {
-            result = native.ReadbackTexture(gpuFrame.Texture, toneMap, diagnostic, selection.Value.Region);
-        }
+        ReadbackResult result = CropResult(fullCapture, selection.Value.Region);
         if (diagnostic) result.PrintStats();
 
         result = ApplySelectionEdits(result, selection.Value);

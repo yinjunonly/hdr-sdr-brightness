@@ -23,17 +23,17 @@ Install from the [Microsoft Store](https://apps.microsoft.com/detail/9nksvcpjl35
 Use the Windows x64 package:
 
 ```text
-HdrSdrBrightness-1.0.15-win64.zip
+HdrSdrBrightness-1.0.16-win64.zip
 ```
 
 Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no installer, no service, and no administrator privileges are required.
 
-### What's New In 1.0.15
+### What's New In 1.0.16
 
-- Makes region screenshot invocation feel faster by showing the selection overlay immediately with a quick preview.
-- Processes only the selected region for HDR readback and tone mapping after region selection, instead of processing the full screen first.
-- Warms and reuses the HDR capture helper's D3D / Windows Graphics Capture runtime in the background.
-- Routes fullscreen HDR screenshots through the persistent helper when available, reducing repeated helper startup overhead.
+- Fixes a region HDR screenshot preview/output overexposure regression introduced in 1.0.15.
+- Keeps the fast region selection overlay, then refreshes it with the stable HDR tone-mapped preview when the capture is ready.
+- Restores the safer full-frame HDR tone mapping path before cropping the selected region.
+- Keeps the warmed persistent HDR capture helper for faster repeated screenshot startup.
 
 ![HDR screenshot capture workflow](image/README/hdr-screenshot-1.0.10.png)
 
@@ -217,17 +217,17 @@ SDR white level
 Windows x64 用户下载：
 
 ```text
-HdrSdrBrightness-1.0.15-win64.zip
+HdrSdrBrightness-1.0.16-win64.zip
 ```
 
 解压后运行 `HdrSdrBrightness.exe`。这是便携程序：不需要安装，不创建服务，也不需要管理员权限。
 
-### 1.0.15 更新内容
+### 1.0.16 更新内容
 
-- 区域截图会先用快速预览立刻显示框选层，减少按下快捷键后的等待感。
-- 选区完成后只对选中的区域做 HDR readback 和 tone mapping，不再先处理整屏再裁剪。
-- HDR 截图 helper 会在后台预热并复用 D3D / Windows Graphics Capture 运行时。
-- 全屏 HDR 截图优先复用常驻 helper，减少反复启动 helper 的开销。
+- 修复 1.0.15 引入的区域 HDR 截图预览/成图过曝回归。
+- 保留快速弹出的区域框选层，并在 HDR 捕获完成后自动刷新为稳定的 HDR tone-mapped 预览。
+- 恢复更稳妥的整屏 HDR tone mapping 后再裁剪选区的成图路径。
+- 保留常驻 HDR 截图 helper 的预热机制，减少重复截图时的启动等待。
 
 ![HDR 截图捕获流程](image/README/hdr-screenshot-1.0.10-zh.png)
 
