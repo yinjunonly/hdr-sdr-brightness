@@ -23,17 +23,18 @@ Install from the [Microsoft Store](https://apps.microsoft.com/detail/9nksvcpjl35
 Use the Windows x64 package:
 
 ```text
-HdrSdrBrightness-1.0.19-win64.zip
+HdrSdrBrightness-1.0.20-win64.zip
 ```
 
 Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no installer, no service, and no administrator privileges are required.
 
-### What's New In 1.0.19
+### What's New In 1.0.20
 
 - Keeps the region screenshot picker on the fast desktop preview so HDR selection no longer flashes into an over-bright WGC preview.
 - Uses the WGC HDR frame only for the final copy/save result.
 - Reduces the HDR screenshot helper dependency size by using a smaller Windows SDK projection.
-- Further splits the screenshot editor UI into smaller preview/editor/control modules.
+- Further splits the screenshot editor and region selector UI into smaller preview, rendering, toolbar, geometry, and input modules.
+- Keeps screenshot editor undo/redo shortcuts available with `Ctrl+Z` and `Ctrl+Y`.
 - Reduces the bundled HDR screenshot helper size by removing an unnecessary WinUI/XAML projection dependency.
 - Keeps the warmed persistent HDR capture helper for faster repeated screenshot startup.
 
@@ -219,17 +220,18 @@ SDR white level
 Windows x64 用户下载：
 
 ```text
-HdrSdrBrightness-1.0.19-win64.zip
+HdrSdrBrightness-1.0.20-win64.zip
 ```
 
 解压后运行 `HdrSdrBrightness.exe`。这是便携程序：不需要安装，不创建服务，也不需要管理员权限。
 
-### 1.0.19 更新内容
+### 1.0.20 更新内容
 
 - 区域截图选择框保持使用快速桌面预览，不再中途切到偏亮的 WGC HDR 预览。
 - WGC HDR 帧只用于最终复制/保存结果。
 - 改用更小的 Windows SDK 投影，降低 HDR 截图 helper 的依赖体积。
-- 继续拆分截图编辑器 UI，将预览、编辑器和控件代码分到更清晰的模块里。
+- 继续拆分截图编辑器和区域选择器 UI，将预览、渲染、工具栏、坐标和输入代码分到更清晰的模块里。
+- 截图编辑器继续支持 `Ctrl+Z` 撤销和 `Ctrl+Y` 重做。
 - 移除不必要的 WinUI/XAML 投影依赖，降低随包分发的 HDR 截图 helper 体积。
 - 保留常驻 HDR 截图 helper 的预热机制，减少重复截图时的启动等待。
 
