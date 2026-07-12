@@ -23,20 +23,20 @@ Install from the [Microsoft Store](https://apps.microsoft.com/detail/9nksvcpjl35
 Use the Windows x64 package:
 
 ```text
-HdrSdrBrightness-1.0.20-win64.zip
+HdrSdrBrightness-1.1.0-win64.zip
 ```
 
 Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no installer, no service, and no administrator privileges are required.
 
-### What's New In 1.0.20
+### What's New In 1.1.0
 
-- Keeps the region screenshot picker on the fast desktop preview so HDR selection no longer flashes into an over-bright WGC preview.
-- Uses the WGC HDR frame only for the final copy/save result.
-- Reduces the HDR screenshot helper dependency size by using a smaller Windows SDK projection.
-- Further splits the screenshot editor and region selector UI into smaller preview, rendering, toolbar, geometry, and input modules.
-- Keeps screenshot editor undo/redo shortcuts available with `Ctrl+Z` and `Ctrl+Y`.
-- Reduces the bundled HDR screenshot helper size by removing an unnecessary WinUI/XAML projection dependency.
-- Keeps the warmed persistent HDR capture helper for faster repeated screenshot startup.
+- Rebuilds the complete HDR screenshot capture and editor path in native C++, removing the bundled .NET runtime and substantially reducing the portable package size.
+- Keeps a native WGC/D3D11 capture server ready in the background for a faster shortcut-to-picker response without a visible console window.
+- Preserves full physical resolution through region selection, fullscreen preview, clipboard copy, and PNG save while keeping HDR tone mapping consistent.
+- Makes repeated region screenshot shortcuts replace the current screenshot; rapid requests are coalesced so only the newest picker remains.
+- Adds maximize/restore, pointer-centered mouse-wheel zoom from fit-to-window through 8x, and middle-button panning to fullscreen preview.
+- Restores the familiar toolbar icons, renders a true source-pixel mosaic brush, and keeps annotation dragging smooth with reusable native paint surfaces.
+- Keeps `Ctrl+Z` undo and `Ctrl+Y` redo, and improves portable startup readiness after Windows sign-in.
 
 ![HDR screenshot capture workflow](image/README/hdr-screenshot-1.0.10.png)
 
@@ -133,7 +133,7 @@ Measured with the settings window closed and the app running in `--background` t
 
 Sampling method: 1 second process samples after a 5 second warm-up. CPU is calculated from `TotalProcessorTime` deltas and normalized across 12 logical processors. Actual values can vary by display count, HDR state, Windows build, GPU driver, and hardware.
 
-HDR screenshot capture is optimized for quick daily use. The tray app warms `HdrSdrCapture.exe` shortly after startup and keeps it alive with the tray process, so region capture can avoid repeated .NET/WinForms cold starts. The helper waits quietly on a named pipe while idle and does not keep a Windows Graphics Capture session running until a screenshot is requested. Memory is higher than the tray app alone while the helper is resident, but idle CPU/GPU usage should stay near zero.
+HDR screenshot capture is optimized for quick daily use. Shortly after startup, the tray app starts the native `HdrSdrNativeCapture.exe` server and runs one hidden `HdrSdrNativeEditor.exe --warmup` process that exits immediately. The capture server then waits quietly on a named pipe and does not keep a Windows Graphics Capture session open until a screenshot is requested. The editor starts only when needed, and the shipped build has no .NET/WinForms runtime dependency. Memory is higher than the tray app alone while the capture server is resident, but idle CPU/GPU usage should stay near zero.
 
 The background path is designed to stay quiet:
 
@@ -220,20 +220,20 @@ SDR white level
 Windows x64 用户下载：
 
 ```text
-HdrSdrBrightness-1.0.20-win64.zip
+HdrSdrBrightness-1.1.0-win64.zip
 ```
 
 解压后运行 `HdrSdrBrightness.exe`。这是便携程序：不需要安装，不创建服务，也不需要管理员权限。
 
-### 1.0.20 更新内容
+### 1.1.0 更新内容
 
-- 区域截图选择框保持使用快速桌面预览，不再中途切到偏亮的 WGC HDR 预览。
-- WGC HDR 帧只用于最终复制/保存结果。
-- 改用更小的 Windows SDK 投影，降低 HDR 截图 helper 的依赖体积。
-- 继续拆分截图编辑器和区域选择器 UI，将预览、渲染、工具栏、坐标和输入代码分到更清晰的模块里。
-- 截图编辑器继续支持 `Ctrl+Z` 撤销和 `Ctrl+Y` 重做。
-- 移除不必要的 WinUI/XAML 投影依赖，降低随包分发的 HDR 截图 helper 体积。
-- 保留常驻 HDR 截图 helper 的预热机制，减少重复截图时的启动等待。
+- 将完整的 HDR 截图捕获与编辑流程重写为原生 C++，移除随包分发的 .NET 运行时，显著缩小便携包体积。
+- 常驻预热原生 WGC/D3D11 捕获服务，缩短快捷键到取景框的等待时间，并且不再弹出命令行窗口。
+- 区域选择、全屏预览、剪贴板复制和 PNG 保存全程保持物理分辨率，HDR tone mapping 表现保持一致。
+- 连续按区域截图快捷键会替换当前截图；快速连按只保留最后一次请求，不再叠加多个取景框。
+- 全屏预览新增最大化/还原、以鼠标位置为中心的适应窗口至 8 倍滚轮缩放，以及鼠标中键拖动画面。
+- 恢复熟悉的工具栏图标，马赛克改为真正的源像素块，并通过复用原生绘图表面提升标注拖动流畅度。
+- 保留 `Ctrl+Z` 撤销和 `Ctrl+Y` 重做，并改善便携版在 Windows 登录后的自启动就绪速度。
 
 ![HDR 截图捕获流程](image/README/hdr-screenshot-1.0.10-zh.png)
 
@@ -330,7 +330,7 @@ https://apps.microsoft.com/detail/9nksvcpjl35j?cid=github-readme
 
 采样方式：预热 5 秒后，每 1 秒读取一次进程数据。CPU 使用进程 `TotalProcessorTime` 增量计算，并按 12 个逻辑处理器归一化。实际占用会随显示器数量、HDR 状态、Windows 版本、显卡驱动和硬件环境变化。
 
-HDR 截图针对日常快速使用做了优化。托盘主程序启动后会提前预热 `HdrSdrCapture.exe`，并让它跟随托盘进程保持运行，避免区域截图反复支付 .NET/WinForms 冷启动成本。helper 空闲时只等待命名管道命令，不会持续保持 Windows Graphics Capture 会话；相比单独的托盘进程，内存占用会更高，但空闲 CPU/GPU 占用应接近 0。
+HDR 截图针对日常快速使用做了优化。托盘主程序启动后会启动原生 `HdrSdrNativeCapture.exe` 服务，并隐藏运行一次随后立即退出的 `HdrSdrNativeEditor.exe --warmup`。捕获服务空闲时只等待命名管道命令，不会持续保持 Windows Graphics Capture 会话；编辑器只在需要时启动，发布包不依赖 .NET/WinForms。相比单独的托盘进程，常驻捕获服务会增加内存占用，但空闲 CPU/GPU 占用应接近 0。
 
 后台路径尽量保持安静：
 

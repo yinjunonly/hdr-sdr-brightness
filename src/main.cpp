@@ -13,10 +13,6 @@
 #define CLEARTYPE_NATURAL_QUALITY 6
 #endif
 
-#ifndef MOD_NOREPEAT
-#define MOD_NOREPEAT 0x4000
-#endif
-
 #include <algorithm>
 #include <cmath>
 #include <cwchar>
@@ -27,18 +23,32 @@
 
 #include "localization.h"
 #include "version.h"
+#include "app_hotkeys.h"
+#include "capture_pipe.h"
+#include "capture_paths.h"
+#include "capture_request_queue.h"
+#include "display_brightness.h"
+#include "editor_window_control.h"
+#include "fullscreen_capture_adapter.h"
+#include "hdr_preview.h"
+#include "launch_mode.h"
+#include "night_mode.h"
+#include "process_util.h"
+#include "registry_util.h"
+#include "registry_watcher.h"
+#include "startup_integration.h"
+#include "supporter_code.h"
+#include "tray_icon.h"
+#include "ui_backbuffer.h"
+#include "ui_dpi.h"
+#include "ui_gdiplus.h"
+#include "ui_theme.h"
+#include "ui_window.h"
 
 namespace {
 
-const wchar_t kAppName[] = L"HdrSdrBrightness";
-const wchar_t kLegacySyncAppName[] = L"HdrSdrSync";
-const wchar_t kLegacyOledAppName[] = L"OledHdrSdrSync";
 const wchar_t kDisplayName[] = L"HDR SDR Brightness";
 const wchar_t kConfigKey[] = L"Software\\OledHdrSdrSync";
-const wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-const wchar_t kStartupTaskName[] = L"HdrSdrBrightness";
-const wchar_t kStoreStartupTaskId[] = L"HdrSdrBrightnessStartup";
-const wchar_t kCapturePipeName[] = L"\\\\.\\pipe\\HdrSdrBrightnessCapture";
 const int IDI_APPICON = 101;
 
 const UINT kTrayMessage = WM_APP + 1;
@@ -53,7 +63,7 @@ const UINT_PTR kCaptureWarmupTimer = 5;
 const UINT kRecheckMs = 15 * 1000;
 const UINT kTransitionMs = 45;
 const UINT kSettingsAnimationMs = 33;
-const UINT kCaptureWarmupMs = 1500;
+const UINT kCaptureWarmupMs = 250;
 const UINT32 kTransitionStepLevel = 50;
 const int kSettingsClientWidth = 640;
 const int kSettingsClientHeight = 620;
@@ -83,6 +93,7 @@ const UINT kMenuHdrScreenshot = 1009;
 const int kHotkeyIdScreenshot = 1;
 const int kHotkeyIdFullscreen = 2;
 const UINT kFullscreenDoneMessage = WM_APP + 5;
+const UINT kRegionCaptureDoneMessage = WM_APP + 6;
 
 const int kIdDayBrightness = 2001;
 const int kIdNightBrightness = 2002;
@@ -112,15 +123,6 @@ const wchar_t kHdrCalibrationWebUrl[] = L"https://apps.microsoft.com/detail/9n7f
 #endif
 #ifndef NIN_BALLOONUSERCLICK
 #define NIN_BALLOONUSERCLICK (WM_USER + 5)
-#endif
-#ifndef NIF_SHOWTIP
-#define NIF_SHOWTIP 0x00000080
-#endif
-#ifndef NIIF_USER
-#define NIIF_USER 0x00000004
-#endif
-#ifndef NIIF_LARGE_ICON
-#define NIIF_LARGE_ICON 0x00000020
 #endif
 #ifndef WM_DPICHANGED
 #define WM_DPICHANGED 0x02E0
@@ -171,153 +173,6 @@ enum NotificationAction {
     NotificationActionFullscreenScreenshot = 4
 };
 
-const UINT32 kQdcOnlyActivePaths = 0x00000002;
-const UINT32 kDisplayConfigPathActive = 0x00000001;
-const UINT32 kDisplayConfigGetAdvancedColorInfo = 9;
-const UINT32 kDisplayConfigGetSdrWhiteLevel = 11;
-const UINT32 kDisplayConfigSetSdrWhiteLevel = 0xFFFFFFEEu;
-
-struct AppDisplayConfigPathSourceInfo {
-    LUID adapterId;
-    UINT32 id;
-    UINT32 modeInfoIdx;
-    UINT32 statusFlags;
-};
-
-struct AppDisplayConfigRational {
-    UINT32 Numerator;
-    UINT32 Denominator;
-};
-
-struct AppDisplayConfigPathTargetInfo {
-    LUID adapterId;
-    UINT32 id;
-    UINT32 modeInfoIdx;
-    UINT32 outputTechnology;
-    UINT32 rotation;
-    UINT32 scaling;
-    AppDisplayConfigRational refreshRate;
-    UINT32 scanLineOrdering;
-    BOOL targetAvailable;
-    UINT32 statusFlags;
-};
-
-struct AppDisplayConfigPathInfo {
-    AppDisplayConfigPathSourceInfo sourceInfo;
-    AppDisplayConfigPathTargetInfo targetInfo;
-    UINT32 flags;
-};
-
-struct AppDisplayConfigModeInfo {
-    UINT32 infoType;
-    UINT32 id;
-    LUID adapterId;
-    BYTE modeInfo[48];
-};
-
-struct AppDisplayConfigDeviceInfoHeader {
-    UINT32 type;
-    UINT32 size;
-    LUID adapterId;
-    UINT32 id;
-};
-
-struct AppDisplayConfigGetAdvancedColorInfo {
-    AppDisplayConfigDeviceInfoHeader header;
-    UINT32 value;
-    UINT32 colorEncoding;
-    UINT32 bitsPerColorChannel;
-};
-
-struct AppDisplayConfigSdrWhiteLevel {
-    AppDisplayConfigDeviceInfoHeader header;
-    ULONG SDRWhiteLevel;
-};
-
-struct AppDisplayConfigSetSdrWhiteLevel {
-    AppDisplayConfigDeviceInfoHeader header;
-    UINT32 SDRWhiteLevel;
-    BYTE finalValue;
-};
-
-typedef LONG(WINAPI* GetDisplayConfigBufferSizesFn)(UINT32, UINT32*, UINT32*);
-typedef LONG(WINAPI* QueryDisplayConfigFn)(UINT32, UINT32*, AppDisplayConfigPathInfo*, UINT32*, AppDisplayConfigModeInfo*, UINT32*);
-typedef LONG(WINAPI* DisplayConfigGetDeviceInfoFn)(AppDisplayConfigDeviceInfoHeader*);
-typedef LONG(WINAPI* DisplayConfigSetDeviceInfoFn)(AppDisplayConfigDeviceInfoHeader*);
-typedef HRESULT(WINAPI* DwmpSdrToHdrBoostFn)(HMONITOR, double);
-
-struct DisplayConfigApi {
-    GetDisplayConfigBufferSizesFn getBufferSizes;
-    QueryDisplayConfigFn query;
-    DisplayConfigGetDeviceInfoFn getDeviceInfo;
-    DisplayConfigSetDeviceInfoFn setDeviceInfo;
-};
-
-typedef UINT D3dFeatureLevel;
-
-struct DxgiSampleDesc {
-    UINT Count;
-    UINT Quality;
-};
-
-struct DxgiSwapChainDesc1 {
-    UINT Width;
-    UINT Height;
-    UINT Format;
-    BOOL Stereo;
-    DxgiSampleDesc SampleDesc;
-    UINT BufferUsage;
-    UINT BufferCount;
-    UINT Scaling;
-    UINT SwapEffect;
-    UINT AlphaMode;
-    UINT Flags;
-};
-
-struct D3d11Viewport {
-    FLOAT TopLeftX;
-    FLOAT TopLeftY;
-    FLOAT Width;
-    FLOAT Height;
-    FLOAT MinDepth;
-    FLOAT MaxDepth;
-};
-
-const UINT kD3dDriverTypeHardware = 1;
-const UINT kD3dDriverTypeWarp = 5;
-const UINT kD3d11CreateDeviceBgraSupport = 0x20;
-const UINT kD3d11SdkVersion = 7;
-const UINT kD3d11PrimitiveTopologyTriangleList = 4;
-const D3dFeatureLevel kD3dFeatureLevel11_1 = 0xb100;
-const D3dFeatureLevel kD3dFeatureLevel11_0 = 0xb000;
-const D3dFeatureLevel kD3dFeatureLevel10_1 = 0xa100;
-const D3dFeatureLevel kD3dFeatureLevel10_0 = 0xa000;
-const UINT kDxgiFormatUnknown = 0;
-const UINT kDxgiFormatR16G16B16A16Float = 10;
-const UINT kDxgiUsageRenderTargetOutput = 0x20;
-const UINT kDxgiScalingStretch = 0;
-const UINT kDxgiSwapEffectFlipDiscard = 4;
-const UINT kDxgiAlphaModeIgnore = 3;
-const UINT kDxgiMwaNoAltEnter = 0x2;
-const UINT kDxgiColorSpaceRgbFullG10NoneP709 = 1;
-const UINT kDxgiSwapChainColorSpaceSupportPresent = 0x1;
-const UINT kD3dCompileEnableStrictness = 1 << 11;
-const UINT kD3dCompileOptimizationLevel3 = 1 << 15;
-
-const GUID kIidIdxgiDevice =
-    {0x54ec77fa, 0x1377, 0x44e6, {0x8c, 0x32, 0x88, 0xfd, 0x5f, 0x44, 0xc8, 0x4c}};
-const GUID kIidIdxgiFactory2 =
-    {0x50c83a1c, 0xe072, 0x4c48, {0x87, 0xb0, 0x36, 0x30, 0xfa, 0x36, 0xa6, 0xd0}};
-const GUID kIidIdxgiSwapChain3 =
-    {0x94d99bdb, 0xf1f8, 0x4ab0, {0xb2, 0x36, 0x7d, 0xa0, 0x17, 0x0e, 0xda, 0xb1}};
-const GUID kIidD3d11Texture2D =
-    {0x6f15aaf2, 0xd208, 0x4e89, {0x9a, 0xb4, 0x48, 0x95, 0x35, 0xd3, 0x4f, 0x9c}};
-
-typedef HRESULT(WINAPI* D3D11CreateDeviceFn)(void*, UINT, HMODULE, UINT, const D3dFeatureLevel*,
-                                             UINT, UINT, void**, D3dFeatureLevel*, void**);
-typedef HRESULT(WINAPI* D3DCompileFn)(LPCVOID, SIZE_T, LPCSTR, const void*, void*, LPCSTR, LPCSTR,
-                                      UINT, UINT, void**, void**);
-
 struct Config {
     int dayBrightness;
     int nightBrightness;
@@ -353,46 +208,15 @@ struct Config {
           fullscreenHotkeyVk('S') {}
 };
 
-struct MaybeBool {
-    bool known;
-    bool value;
-
-    MaybeBool() : known(false), value(false) {}
-    MaybeBool(bool knownValue, bool boolValue) : known(knownValue), value(boolValue) {}
-};
-
 struct NightDecision {
     bool night;
     std::wstring source;
 };
 
-struct ApplyResult {
-    bool ok;
-    int targetCount;
-    int successCount;
-    LONG lastError;
-    bool usedDwmFallback;
-    bool changed;
-    bool complete;
-    UINT32 appliedLevel;
-
-    ApplyResult()
-        : ok(false),
-          targetCount(0),
-          successCount(0),
-          lastError(ERROR_SUCCESS),
-          usedDwmFallback(false),
-          changed(false),
-          complete(false),
-          appliedLevel(0) {}
-};
-
 HINSTANCE g_instance = NULL;
 HWND g_mainWindow = NULL;
 HWND g_settingsWindow = NULL;
-NOTIFYICONDATAW g_tray = {};
-HICON g_trayIcon = NULL;
-HICON g_notificationIcon = NULL;
+tray_icon::TrayIcon g_trayIcon;
 UINT g_taskbarCreated = 0;
 Config g_config;
 Config g_settingsDraft;
@@ -443,14 +267,7 @@ int g_settingsDialogAnim = 0;
 int g_settingsDropdownAnim = 0;
 int g_supportButtonAnim = 0;
 int g_controlAnim[kAnimationSlotCount] = {};
-HANDLE g_stopEvent = NULL;
-HANDLE g_registryThread = NULL;
-MaybeBool g_cachedSunsetSchedule;
-bool g_sunsetScheduleCacheValid = false;
-MaybeBool g_cachedNightLightActive;
-bool g_nightLightActiveCacheValid = false;
-MaybeBool g_cachedManualSchedule;
-bool g_manualScheduleCacheValid = false;
+registry_watcher::Watcher g_registryWatcher;
 HFONT g_uiFont = NULL;
 HFONT g_smallFont = NULL;
 HFONT g_titleFont = NULL;
@@ -459,89 +276,16 @@ HFONT g_heroFont = NULL;
 HBRUSH g_windowBrush = NULL;
 HBRUSH g_panelBrush = NULL;
 HBRUSH g_editBrush = NULL;
-ULONG_PTR g_gdiplusToken = 0;
-int g_uiDpiX = 96;
-int g_uiDpiY = 96;
-
-struct HdrPreviewRenderer {
-    HWND hwnd;
-    HMODULE d3d11;
-    HMODULE d3dCompiler;
-    void* device;
-    void* context;
-    void* swapChain;
-    void* swapChain3;
-    void* renderTarget;
-    void* vertexShader;
-    void* pixelShader;
-    int width;
-    int height;
-    bool realHdrColorSpace;
-    bool failed;
-
-    HdrPreviewRenderer()
-        : hwnd(NULL),
-          d3d11(NULL),
-          d3dCompiler(NULL),
-          device(NULL),
-          context(NULL),
-          swapChain(NULL),
-          swapChain3(NULL),
-          renderTarget(NULL),
-          vertexShader(NULL),
-          pixelShader(NULL),
-          width(0),
-          height(0),
-          realHdrColorSpace(false),
-          failed(false) {}
-};
-
 HWND g_hdrPreviewWindow = NULL;
 HdrPreviewRenderer g_hdrPreview;
 
-struct UiTheme {
-    bool dark;
-    COLORREF window;
-    COLORREF card;
-    COLORREF cardBorder;
-    COLORREF cardHover;
-    COLORREF elevated;
-    COLORREF control;
-    COLORREF controlHover;
-    COLORREF controlBorder;
-    COLORREF controlBorderHover;
-    COLORREF text;
-    COLORREF mutedText;
-    COLORREF titleText;
-    COLORREF track;
-    COLORREF trackHover;
-    COLORREF primary;
-    COLORREF primaryHover;
-    COLORREF primaryBorderHover;
-    COLORREF knob;
-    COLORREF disabledText;
-};
-
-UiTheme g_theme = {};
-
-static_assert(sizeof(AppDisplayConfigPathSourceInfo) == 20, "Unexpected DISPLAYCONFIG source size");
-static_assert(sizeof(AppDisplayConfigPathTargetInfo) == 48, "Unexpected DISPLAYCONFIG target size");
-static_assert(sizeof(AppDisplayConfigPathInfo) == 72, "Unexpected DISPLAYCONFIG path size");
-static_assert(sizeof(AppDisplayConfigModeInfo) == 64, "Unexpected DISPLAYCONFIG mode size");
-static_assert(sizeof(AppDisplayConfigDeviceInfoHeader) == 20, "Unexpected DISPLAYCONFIG header size");
-static_assert(sizeof(AppDisplayConfigGetAdvancedColorInfo) == 32, "Unexpected advanced color size");
-static_assert(sizeof(AppDisplayConfigSdrWhiteLevel) == 24, "Unexpected SDR white level size");
+ui_theme::Theme g_theme = {};
+using ui_theme::Rgb;
 
 int ClampInt(int value, int low, int high) {
     if (value < low) return low;
     if (value > high) return high;
     return value;
-}
-
-void CopyString(wchar_t* buffer, size_t count, const std::wstring& value) {
-    if (!buffer || count == 0) return;
-    std::wcsncpy(buffer, value.c_str(), count - 1);
-    buffer[count - 1] = L'\0';
 }
 
 int ResolveSystemUiLanguage() {
@@ -596,7 +340,6 @@ void UpdateSettingsWindowTitle(HWND hwnd) {
 
 std::wstring PercentLabel(int value);
 int TextWidthLogical(HDC dc, const wchar_t* text, HFONT font);
-bool FileExists(const std::wstring& path);
 void CleanupFontResources();
 void ShowTrayNotification(const std::wstring& title, const std::wstring& body,
                           NotificationAction action);
@@ -639,327 +382,217 @@ bool UseStoreStartupIntegration() {
     return IsStoreBuild();
 }
 
-std::wstring GetExePath() {
-    std::vector<wchar_t> path(MAX_PATH);
-    DWORD length = 0;
-    for (;;) {
-        length = GetModuleFileNameW(NULL, path.data(), static_cast<DWORD>(path.size()));
-        if (length == 0) return L"";
-        if (length < path.size() - 1) break;
-        path.resize(path.size() * 2);
-    }
-    return std::wstring(path.data(), length);
-}
-
-std::wstring QuotePath(const std::wstring& path) {
-    return L"\"" + path + L"\"";
-}
-
-std::wstring QuoteCommandLineArgument(const std::wstring& value) {
-    std::wstring quoted;
-    quoted.reserve(value.size() + 2);
-    quoted.push_back(L'"');
-
-    size_t backslashes = 0;
-    for (size_t i = 0; i < value.size(); ++i) {
-        wchar_t ch = value[i];
-        if (ch == L'\\') {
-            ++backslashes;
-            continue;
-        }
-
-        if (ch == L'"') {
-            quoted.append(backslashes * 2 + 1, L'\\');
-            quoted.push_back(ch);
-            backslashes = 0;
-            continue;
-        }
-
-        quoted.append(backslashes, L'\\');
-        backslashes = 0;
-        quoted.push_back(ch);
-    }
-
-    quoted.append(backslashes * 2, L'\\');
-    quoted.push_back(L'"');
-    return quoted;
-}
-
-std::wstring QuotePowerShellString(const std::wstring& value) {
-    std::wstring quoted;
-    quoted.reserve(value.size() + 2);
-    quoted.push_back(L'\'');
-    for (size_t i = 0; i < value.size(); ++i) {
-        if (value[i] == L'\'') quoted.push_back(L'\'');
-        quoted.push_back(value[i]);
-    }
-    quoted.push_back(L'\'');
-    return quoted;
-}
-
-std::wstring DirectoryFromPath(const std::wstring& path) {
-    size_t pos = path.find_last_of(L"\\/");
-    if (pos == std::wstring::npos) return L"";
-    return path.substr(0, pos);
-}
-
-std::wstring JoinPath(const std::wstring& directory, const std::wstring& relative) {
-    if (directory.empty()) return relative;
-    wchar_t last = directory[directory.size() - 1];
-    if (last == L'\\' || last == L'/') return directory + relative;
-    return directory + L"\\" + relative;
-}
-
-std::wstring GetCaptureHelperPath() {
-    return JoinPath(JoinPath(DirectoryFromPath(GetExePath()), L"capture"), L"HdrSdrCapture.exe");
-}
-
-bool g_captureServerStartAttempted = false;
+bool g_nativeCaptureServerStartAttempted = false;
+DWORD g_nativeCaptureServerStartTick = 0;
+bool g_editorWarmupAttempted = false;
+capture_request::Queue g_regionCaptureRequests;
 
 std::wstring GetFullscreenNotificationCapturePath() {
-    std::vector<wchar_t> temp(MAX_PATH);
-    DWORD length = GetTempPathW(static_cast<DWORD>(temp.size()), temp.data());
-    std::wstring baseDirectory = (length > 0 && length < temp.size()) ? std::wstring(temp.data(), length) : L".";
-    std::wstring directory = JoinPath(baseDirectory, L"HdrSdrBrightness");
-    CreateDirectoryW(directory.c_str(), NULL);
-
-    SYSTEMTIME now = {};
-    GetLocalTime(&now);
-    std::wstringstream name;
-    name << L"fullscreen-"
-         << now.wYear
-         << (now.wMonth < 10 ? L"0" : L"") << now.wMonth
-         << (now.wDay < 10 ? L"0" : L"") << now.wDay
-         << L"-"
-         << (now.wHour < 10 ? L"0" : L"") << now.wHour
-         << (now.wMinute < 10 ? L"0" : L"") << now.wMinute
-         << (now.wSecond < 10 ? L"0" : L"") << now.wSecond
-         << L"-" << now.wMilliseconds
-         << L".bmp";
-    return JoinPath(directory, name.str());
+    return capture_paths::FullscreenNotificationBmpPath();
 }
 
-bool LaunchDetached(const std::wstring& commandLine, const std::wstring& workingDirectory) {
-    STARTUPINFOW si = {};
-    PROCESS_INFORMATION pi = {};
-    si.cb = sizeof(si);
-
-    std::vector<wchar_t> mutableCommand(commandLine.begin(), commandLine.end());
-    mutableCommand.push_back(L'\0');
-
-    BOOL created = CreateProcessW(NULL, mutableCommand.data(), NULL, NULL, FALSE, 0,
-                                  NULL, workingDirectory.empty() ? NULL : workingDirectory.c_str(), &si, &pi);
-    if (!created) return false;
-
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-    return true;
+std::wstring GetRegionEditCapturePath() {
+    return capture_paths::RegionEditBmpPath();
 }
 
-bool SendCaptureServerCommand(const std::wstring& command, DWORD timeoutMs) {
-    std::wstring payload = command + L"\n";
-    DWORD startTick = GetTickCount();
-    for (;;) {
-        HANDLE pipe = CreateFileW(kCapturePipeName, GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
-                                  FILE_ATTRIBUTE_NORMAL, NULL);
-        if (pipe != INVALID_HANDLE_VALUE) {
-            DWORD bytesWritten = 0;
-            DWORD bytesToWrite = static_cast<DWORD>(payload.size() * sizeof(wchar_t));
-            BOOL ok = WriteFile(pipe, payload.data(), bytesToWrite, &bytesWritten, NULL);
-            CloseHandle(pipe);
-            return ok && bytesWritten == bytesToWrite;
-        }
+std::wstring ReplaceExtension(const std::wstring& path, const std::wstring& extension) {
+    return capture_paths::ReplaceExtension(path, extension);
+}
 
-        DWORD error = GetLastError();
-        DWORD elapsed = GetTickCount() - startTick;
-        if (elapsed >= timeoutMs) return false;
+std::wstring CurrentSdrWhiteLevelCommandField() {
+    UINT32 level = g_lastKnownTargetLevel;
+    if (level == 0 && g_lastAppliedBrightness >= 0) {
+        level = BrightnessPercentToSdrLevel(g_lastAppliedBrightness);
+    }
+    return level > 0 ? IntText(static_cast<int>(level)) : L"";
+}
 
-        DWORD remaining = timeoutMs - elapsed;
-        if (error == ERROR_PIPE_BUSY) {
-            WaitNamedPipeW(kCapturePipeName, std::min<DWORD>(remaining, 100));
-        } else {
-            Sleep(std::min<DWORD>(remaining, 50));
-        }
+std::wstring SdrWhiteArgumentFromLevel(UINT32 level) {
+    if (level == 0) return L"";
+    std::wstringstream ss;
+    ss << (level / 1000u) << L".";
+    UINT32 fraction = level % 1000u;
+    if (fraction < 100u) ss << L"0";
+    if (fraction < 10u) ss << L"0";
+    ss << fraction;
+    return ss.str();
+}
+
+std::wstring CurrentSdrWhiteCommandLineArgument() {
+    UINT32 level = g_lastKnownTargetLevel;
+    if (level == 0 && g_lastAppliedBrightness >= 0) {
+        level = BrightnessPercentToSdrLevel(g_lastAppliedBrightness);
+    }
+    std::wstring value = SdrWhiteArgumentFromLevel(level);
+    return value.empty() ? L"" : L" --sdr-white " + value;
+}
+
+void StartNativeCaptureHelperServer() {
+    if (g_nativeCaptureServerStartAttempted) return;
+
+    std::wstring command = fullscreen_capture::BuildNativeServerCommand(CurrentUiLanguage());
+    if (command.empty()) return;
+
+    std::wstring helperPath = fullscreen_capture::GetNativeHelperPath();
+    g_nativeCaptureServerStartAttempted = true;
+    g_nativeCaptureServerStartTick = GetTickCount();
+
+    if (!LaunchDetachedHidden(command, DirectoryFromPath(helperPath))) {
+        g_nativeCaptureServerStartAttempted = false;
+        g_nativeCaptureServerStartTick = 0;
     }
 }
 
-bool SendCaptureServerCommandForExitCode(const std::wstring& command, DWORD timeoutMs, DWORD* exitCode) {
-    if (exitCode) *exitCode = 1;
+void StartNativeEditorWarmup() {
+    if (g_editorWarmupAttempted) return;
 
-    std::wstring payload = command + L"\n";
-    DWORD startTick = GetTickCount();
-    HANDLE pipe = INVALID_HANDLE_VALUE;
-    for (;;) {
-        pipe = CreateFileW(kCapturePipeName, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
-                           FILE_ATTRIBUTE_NORMAL, NULL);
-        if (pipe != INVALID_HANDLE_VALUE) break;
+    std::wstring command = fullscreen_capture::BuildEditorWarmupCommand();
+    if (command.empty()) return;
 
-        DWORD elapsed = GetTickCount() - startTick;
-        if (elapsed >= timeoutMs) return false;
-
-        DWORD error = GetLastError();
-        DWORD remaining = timeoutMs - elapsed;
-        if (error == ERROR_PIPE_BUSY) {
-            WaitNamedPipeW(kCapturePipeName, std::min<DWORD>(remaining, 100));
-        } else {
-            Sleep(std::min<DWORD>(remaining, 50));
-        }
-    }
-
-    DWORD bytesWritten = 0;
-    DWORD bytesToWrite = static_cast<DWORD>(payload.size() * sizeof(wchar_t));
-    BOOL ok = WriteFile(pipe, payload.data(), bytesToWrite, &bytesWritten, NULL);
-    if (!ok || bytesWritten != bytesToWrite) {
-        CloseHandle(pipe);
-        return false;
-    }
-
-    std::vector<char> responseBytes;
-    for (;;) {
-        DWORD elapsed = GetTickCount() - startTick;
-        if (elapsed >= timeoutMs) {
-            CloseHandle(pipe);
-            return false;
-        }
-
-        DWORD available = 0;
-        if (!PeekNamedPipe(pipe, NULL, 0, NULL, &available, NULL)) {
-            CloseHandle(pipe);
-            return false;
-        }
-
-        if (available == 0) {
-            Sleep(25);
-            continue;
-        }
-
-        std::vector<char> buffer(available);
-        DWORD read = 0;
-        if (!ReadFile(pipe, buffer.data(), available, &read, NULL)) {
-            CloseHandle(pipe);
-            return false;
-        }
-        responseBytes.insert(responseBytes.end(), buffer.data(), buffer.data() + read);
-
-        size_t charCount = responseBytes.size() / sizeof(wchar_t);
-        if (charCount == 0) continue;
-        std::wstring response(reinterpret_cast<const wchar_t*>(responseBytes.data()), charCount);
-        size_t newline = response.find(L'\n');
-        if (newline == std::wstring::npos) continue;
-
-        response.resize(newline);
-        if (!response.empty() && response.back() == L'\r') response.pop_back();
-        wchar_t* end = NULL;
-        unsigned long value = wcstoul(response.c_str(), &end, 10);
-        if (end == response.c_str()) {
-            CloseHandle(pipe);
-            return false;
-        }
-        if (exitCode) *exitCode = static_cast<DWORD>(value);
-        CloseHandle(pipe);
-        return true;
+    std::wstring helperPath = fullscreen_capture::GetEditorHelperPath();
+    g_editorWarmupAttempted = true;
+    if (!LaunchDetachedHidden(command, DirectoryFromPath(helperPath))) {
+        g_editorWarmupAttempted = false;
     }
 }
 
-void StartCaptureHelperServer() {
-    if (g_captureServerStartAttempted) return;
-    g_captureServerStartAttempted = true;
+struct RegionCaptureArgs {
+    std::uint64_t generation;
+    HWND mainWnd;
+    std::wstring nativePipeName;
+    std::wstring nativePipeCommand;
+    std::wstring nativeCommand;
+    std::wstring editCommand;
+};
 
-    std::wstring helperPath = GetCaptureHelperPath();
-    if (!FileExists(helperPath)) return;
+struct RegionCaptureResult {
+    std::uint64_t generation;
+    bool captured;
+    bool helperMissing;
+    std::wstring editCommand;
+};
 
-    std::wstringstream command;
-    command << QuotePath(helperPath)
-            << L" --server --parent-pid " << GetCurrentProcessId()
-            << L" --idle-timeout-ms 0"
-            << L" --lang " << CurrentUiLanguage();
-    LaunchDetached(command.str(), DirectoryFromPath(helperPath));
+void PostRegionCaptureResult(HWND mainWnd,
+                             std::uint64_t generation,
+                             bool captured,
+                             bool helperMissing,
+                             const std::wstring& editCommand) {
+    auto* result = new RegionCaptureResult{
+        generation, captured, helperMissing, editCommand
+    };
+    if (!PostMessageW(mainWnd, kRegionCaptureDoneMessage, 0,
+                      reinterpret_cast<LPARAM>(result))) {
+        delete result;
+    }
+}
+
+static DWORD WINAPI RegionCaptureThread(LPVOID param) {
+    auto* args = static_cast<RegionCaptureArgs*>(param);
+    bool captured = false;
+    DWORD exitCode = 1;
+    if (!args->nativePipeName.empty() && !args->nativePipeCommand.empty()) {
+        bool sent = capture_pipe::SendCommandForExitCodeToPipe(
+            args->nativePipeName, args->nativePipeCommand, 30000, &exitCode);
+        captured = sent && exitCode == 0;
+        if (!sent) g_nativeCaptureServerStartAttempted = false;
+    }
+    if (!captured) {
+        bool completed = RunHiddenCommandExitCode(args->nativeCommand, 600000, &exitCode);
+        captured = completed && exitCode == 0;
+    }
+    PostRegionCaptureResult(args->mainWnd, args->generation, captured, false,
+                            args->editCommand);
+    delete args;
+    return 0;
+}
+
+void StartRegionCapture(HWND owner, std::uint64_t generation) {
+    std::wstring regionPath = GetRegionEditCapturePath();
+    std::wstring nativeCommand = fullscreen_capture::BuildCaptureFileCommand(
+        regionPath,
+        CurrentUiLanguage(),
+        CurrentSdrWhiteCommandLineArgument());
+    std::wstring editCommand = fullscreen_capture::BuildEditorSelectCommand(
+        regionPath,
+        ReplaceExtension(regionPath, L".png"),
+        CurrentUiLanguage());
+    if (nativeCommand.empty() || editCommand.empty()) {
+        PostRegionCaptureResult(owner, generation, false, true, L"");
+        return;
+    }
+
+    StartNativeCaptureHelperServer();
+    StartNativeEditorWarmup();
+    auto* args = new RegionCaptureArgs{
+        generation,
+        owner,
+        fullscreen_capture::GetNativePipeName(),
+        fullscreen_capture::BuildCaptureFilePipeCommand(
+            CurrentUiLanguage(), regionPath, CurrentSdrWhiteLevelCommandField()),
+        nativeCommand,
+        editCommand
+    };
+    HANDLE thread = CreateThread(NULL, 0, RegionCaptureThread, args, 0, NULL);
+    if (thread) {
+        CloseHandle(thread);
+        return;
+    }
+    delete args;
+    PostRegionCaptureResult(owner, generation, false, false, editCommand);
 }
 
 void LaunchHdrScreenshotHelper(HWND owner) {
-    (void)owner;
-    std::wstring helperPath = GetCaptureHelperPath();
-    if (!FileExists(helperPath)) {
-        ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtCaptureHelperMissing), NotificationActionDefault);
-        return;
+    editor_window_control::CloseAll();
+    capture_request::RequestDecision request = g_regionCaptureRequests.Request();
+    if (request.startCapture) {
+        StartRegionCapture(owner, request.generation);
     }
-
-    std::wstring pipeCommand = L"select-region\t" + IntText(CurrentUiLanguage());
-    if (SendCaptureServerCommand(pipeCommand, 80)) {
-        return;
-    }
-
-    g_captureServerStartAttempted = false;
-    StartCaptureHelperServer();
-    if (SendCaptureServerCommand(pipeCommand, 5000)) {
-        return;
-    }
-
-    std::wstring command = QuotePath(helperPath) + L" --select-region --open-folder --lang " + IntText(CurrentUiLanguage());
-    if (!LaunchDetached(command, DirectoryFromPath(helperPath))) {
-        ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtCaptureLaunchFailed), NotificationActionDefault);
-        return;
-    }
-
 }
 
 void LaunchHdrFullscreenEditor(HWND owner) {
     (void)owner;
-    std::wstring helperPath = GetCaptureHelperPath();
-    if (!FileExists(helperPath) || g_lastFullscreenCapturePath.empty() ||
-        !FileExists(g_lastFullscreenCapturePath)) {
+    g_regionCaptureRequests.Cancel();
+    if (g_lastFullscreenCapturePath.empty() || !FileExists(g_lastFullscreenCapturePath)) {
         ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtCaptureLaunchFailed), NotificationActionDefault);
         return;
     }
 
-    std::wstring command = QuotePath(helperPath) +
-        L" --edit-file " + QuoteCommandLineArgument(g_lastFullscreenCapturePath) +
-        L" --skip-initial-copy" +
-        L" --lang " + IntText(CurrentUiLanguage());
-    if (!LaunchDetached(command, DirectoryFromPath(helperPath))) {
+    std::wstring command = fullscreen_capture::BuildEditorEditCommand(
+        g_lastFullscreenCapturePath,
+        ReplaceExtension(g_lastFullscreenCapturePath, L".png"),
+        CurrentUiLanguage(),
+        true);
+    if (command.empty()) {
+        ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtCaptureHelperMissing), NotificationActionDefault);
+        return;
+    }
+
+    editor_window_control::CloseAll();
+    if (!LaunchDetached(command, DirectoryFromPath(fullscreen_capture::GetEditorHelperPath()))) {
         ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtCaptureLaunchFailed), NotificationActionDefault);
     }
 }
 
-bool RunHiddenCommand(const std::wstring& commandLine, DWORD timeoutMs);
-bool RunHiddenCommandExitCode(const std::wstring& commandLine, DWORD timeoutMs, DWORD* exitCode);
-void WriteDwordValue(HKEY root, const wchar_t* keyPath, const wchar_t* valueName, DWORD value);
-bool SetStoreStartupEnabled(bool enabled);
-
 void UnregisterAppHotkeys() {
-    if (!g_mainWindow) return;
-    UnregisterHotKey(g_mainWindow, kHotkeyIdScreenshot);
-    UnregisterHotKey(g_mainWindow, kHotkeyIdFullscreen);
+    app_hotkeys::Unregister(g_mainWindow, kHotkeyIdScreenshot, kHotkeyIdFullscreen);
 }
 
 void RegisterAppHotkeys() {
-    if (!g_mainWindow) return;
-    UnregisterAppHotkeys();
-    if (g_config.screenshotHotkeyVk != 0) {
-        RegisterHotKey(g_mainWindow, kHotkeyIdScreenshot,
-                       g_config.screenshotHotkeyMod | MOD_NOREPEAT,
-                       g_config.screenshotHotkeyVk);
-    }
-    if (g_config.fullscreenHotkeyVk != 0) {
-        RegisterHotKey(g_mainWindow, kHotkeyIdFullscreen,
-                       g_config.fullscreenHotkeyMod | MOD_NOREPEAT,
-                       g_config.fullscreenHotkeyVk);
-    }
+    app_hotkeys::Register(g_mainWindow, kHotkeyIdScreenshot,
+                          {g_config.screenshotHotkeyMod, g_config.screenshotHotkeyVk},
+                          kHotkeyIdFullscreen,
+                          {g_config.fullscreenHotkeyMod, g_config.fullscreenHotkeyVk});
 }
 
 bool IsStoreLicenseExplicitlyInactive() {
     if (!IsStoreBuild()) return false;
 
-    std::wstring helperPath = GetCaptureHelperPath();
-    if (!FileExists(helperPath)) return false;
-
-    DWORD exitCode = 1;
-    std::wstring command = QuotePath(helperPath) + L" --check-store-license";
-    if (!RunHiddenCommandExitCode(command, 6000, &exitCode)) {
+    bool active = true;
+    if (!startup_integration::TryReadStoreAppLicenseActive(&active)) {
         return false;
     }
 
-    return exitCode == 2;
+    return !active;
 }
 
 static DWORD WINAPI StoreLicenseCheckThread(LPVOID param) {
@@ -978,30 +611,35 @@ void StartStoreLicenseCheckThread(HWND hwnd) {
 
 void DisableStoreStartupAfterLicenseExpired() {
     if (!UseStoreStartupIntegration()) return;
-    SetStoreStartupEnabled(false);
+    startup_integration::SetStoreStartupEnabled(false);
     g_config.startWithWindows = false;
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"StartWithWindows", 0);
 }
 
 // 全屏截图后台线程参数包
 struct FullscreenCaptureArgs {
-    std::wstring command;
-    std::wstring fallbackCommand;
+    std::wstring nativePipeName;
+    std::wstring nativePipeCommand;
+    std::wstring nativeCommand;
     HWND mainWnd;
-    bool usePipe;
 };
 
 static DWORD WINAPI FullscreenCaptureThread(LPVOID param) {
     auto* args = static_cast<FullscreenCaptureArgs*>(param);
     bool success = false;
-    if (args->usePipe) {
+    if (!args->nativePipeName.empty() && !args->nativePipeCommand.empty()) {
         DWORD exitCode = 1;
-        success = SendCaptureServerCommandForExitCode(args->command, 30000, &exitCode) && exitCode == 0;
-        if (!success && !args->fallbackCommand.empty()) {
-            success = RunHiddenCommand(args->fallbackCommand, 30000);
+        bool sent = capture_pipe::SendCommandForExitCodeToPipe(args->nativePipeName,
+                                                               args->nativePipeCommand,
+                                                               30000,
+                                                               &exitCode);
+        success = sent && exitCode == 0;
+        if (!sent) {
+            g_nativeCaptureServerStartAttempted = false;
         }
-    } else {
-        success = RunHiddenCommand(args->command, 30000);
+    }
+    if (!success && !args->nativeCommand.empty()) {
+        success = RunHiddenCommand(args->nativeCommand, 30000);
     }
     PostMessageW(args->mainWnd, kFullscreenDoneMessage, success ? 1 : 0, 0);
     delete args;
@@ -1011,19 +649,28 @@ static DWORD WINAPI FullscreenCaptureThread(LPVOID param) {
 // 全屏截图：后台线程执行，完成后通过消息通知主窗口
 void LaunchHdrFullscreenCapture(HWND owner) {
     (void)owner;
-    std::wstring helperPath = GetCaptureHelperPath();
-    if (!FileExists(helperPath)) {
+    g_regionCaptureRequests.Cancel();
+    editor_window_control::CloseAll();
+    g_lastFullscreenCapturePath = GetFullscreenNotificationCapturePath();
+    std::wstring nativeCommand = fullscreen_capture::BuildFullscreenCommand(
+        g_lastFullscreenCapturePath,
+        CurrentUiLanguage(),
+        CurrentSdrWhiteCommandLineArgument());
+    if (nativeCommand.empty()) {
         ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtCaptureHelperMissing), NotificationActionDefault);
         return;
     }
-    g_lastFullscreenCapturePath = GetFullscreenNotificationCapturePath();
-    StartCaptureHelperServer();
-    std::wstring pipeCommand = L"fullscreen-clip\t" + IntText(CurrentUiLanguage()) +
-        L"\t" + g_lastFullscreenCapturePath;
-    std::wstring fallbackCommand = QuotePath(helperPath) +
-        L" --fullscreen-clip --output " + QuoteCommandLineArgument(g_lastFullscreenCapturePath) +
-        L" --lang " + IntText(CurrentUiLanguage());
-    auto* args = new FullscreenCaptureArgs{pipeCommand, fallbackCommand, g_mainWindow, true};
+
+    StartNativeCaptureHelperServer();
+    auto* args = new FullscreenCaptureArgs{
+        fullscreen_capture::GetNativePipeName(),
+        fullscreen_capture::BuildFullscreenPipeCommand(
+            CurrentUiLanguage(),
+            g_lastFullscreenCapturePath,
+            CurrentSdrWhiteLevelCommandField()),
+        nativeCommand,
+        g_mainWindow
+    };
     HANDLE hThread = CreateThread(NULL, 0, FullscreenCaptureThread, args, 0, NULL);
     if (hThread) {
         CloseHandle(hThread);
@@ -1031,198 +678,6 @@ void LaunchHdrFullscreenCapture(HWND owner) {
         delete args;
         PostMessageW(g_mainWindow, kFullscreenDoneMessage, 0, 0);
     }
-}
-
-bool RunHiddenCommand(const std::wstring& commandLine, DWORD timeoutMs) {
-    DWORD exitCode = 1;
-    return RunHiddenCommandExitCode(commandLine, timeoutMs, &exitCode) && exitCode == 0;
-}
-
-bool RunHiddenCommandExitCode(const std::wstring& commandLine, DWORD timeoutMs, DWORD* exitCode) {
-    STARTUPINFOW si = {};
-    PROCESS_INFORMATION pi = {};
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
-
-    std::vector<wchar_t> mutableCommand(commandLine.begin(), commandLine.end());
-    mutableCommand.push_back(L'\0');
-
-    BOOL created = CreateProcessW(NULL, mutableCommand.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW,
-                                  NULL, NULL, &si, &pi);
-    if (!created) return false;
-
-    DWORD wait = WaitForSingleObject(pi.hProcess, timeoutMs);
-    DWORD processExitCode = 1;
-    if (wait == WAIT_OBJECT_0) {
-        GetExitCodeProcess(pi.hProcess, &processExitCode);
-    } else {
-        TerminateProcess(pi.hProcess, 1);
-    }
-
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-    if (exitCode) *exitCode = processExitCode;
-    return wait == WAIT_OBJECT_0;
-}
-
-bool IsBackgroundLaunchArgument(const wchar_t* arg) {
-    if (!arg) return false;
-    return lstrcmpiW(arg, L"--background") == 0 ||
-           lstrcmpiW(arg, L"/background") == 0 ||
-           lstrcmpiW(arg, L"--tray") == 0 ||
-           lstrcmpiW(arg, L"/tray") == 0;
-}
-
-bool HasBackgroundLaunchArgument() {
-    int argc = 0;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (!argv) return false;
-
-    bool background = false;
-    for (int i = 1; i < argc; ++i) {
-        if (IsBackgroundLaunchArgument(argv[i])) {
-            background = true;
-            break;
-        }
-    }
-
-    LocalFree(argv);
-    return background;
-}
-
-bool ShouldOpenSettingsOnLaunch() {
-    return !HasBackgroundLaunchArgument();
-}
-
-void ShowSettingsInExistingInstance() {
-    HWND hwnd = FindWindowW(L"HdrSdrBrightnessMainWindow", NULL);
-    if (!hwnd) {
-        hwnd = FindWindowW(L"HdrSdrSyncMainWindow", NULL);
-    }
-    if (!hwnd) {
-        hwnd = FindWindowW(L"OledHdrSdrSyncMainWindow", NULL);
-    }
-    if (hwnd) {
-        PostMessageW(hwnd, WM_COMMAND, MAKEWPARAM(kMenuSettings, 0), 0);
-    }
-}
-
-bool ReadDwordValue(HKEY root, const wchar_t* keyPath, const wchar_t* valueName, DWORD* value) {
-    HKEY key = NULL;
-    LONG rc = RegOpenKeyExW(root, keyPath, 0, KEY_READ, &key);
-    if (rc != ERROR_SUCCESS) return false;
-
-    DWORD type = 0;
-    DWORD size = sizeof(DWORD);
-    DWORD data = 0;
-    rc = RegQueryValueExW(key, valueName, NULL, &type, reinterpret_cast<LPBYTE>(&data), &size);
-    RegCloseKey(key);
-
-    if (rc != ERROR_SUCCESS || type != REG_DWORD || size != sizeof(DWORD)) return false;
-    *value = data;
-    return true;
-}
-
-void WriteDwordValue(HKEY root, const wchar_t* keyPath, const wchar_t* valueName, DWORD value) {
-    HKEY key = NULL;
-    LONG rc = RegCreateKeyExW(root, keyPath, 0, NULL, 0, KEY_SET_VALUE, NULL, &key, NULL);
-    if (rc != ERROR_SUCCESS) return;
-    RegSetValueExW(key, valueName, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value));
-    RegCloseKey(key);
-}
-
-bool ReadStringValue(HKEY root, const wchar_t* keyPath, const wchar_t* valueName, std::wstring* value) {
-    HKEY key = NULL;
-    LONG rc = RegOpenKeyExW(root, keyPath, 0, KEY_READ, &key);
-    if (rc != ERROR_SUCCESS) return false;
-
-    DWORD type = 0;
-    DWORD size = 0;
-    rc = RegQueryValueExW(key, valueName, NULL, &type, NULL, &size);
-    if (rc != ERROR_SUCCESS || (type != REG_SZ && type != REG_EXPAND_SZ) || size < sizeof(wchar_t)) {
-        RegCloseKey(key);
-        return false;
-    }
-
-    std::vector<wchar_t> buffer(size / sizeof(wchar_t) + 1, L'\0');
-    rc = RegQueryValueExW(key, valueName, NULL, &type, reinterpret_cast<LPBYTE>(buffer.data()), &size);
-    RegCloseKey(key);
-    if (rc != ERROR_SUCCESS || (type != REG_SZ && type != REG_EXPAND_SZ)) return false;
-
-    buffer.back() = L'\0';
-    if (value) *value = buffer.data();
-    return true;
-}
-
-void WriteStringValue(HKEY root, const wchar_t* keyPath, const wchar_t* valueName, const std::wstring& value) {
-    HKEY key = NULL;
-    LONG rc = RegCreateKeyExW(root, keyPath, 0, NULL, 0, KEY_SET_VALUE, NULL, &key, NULL);
-    if (rc != ERROR_SUCCESS) return;
-    RegSetValueExW(key, valueName, 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()),
-                   static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
-    RegCloseKey(key);
-}
-
-bool IsSupporterCodeChar(wchar_t ch) {
-    return (ch >= L'0' && ch <= L'9') ||
-           (ch >= L'A' && ch <= L'Z') ||
-           (ch >= L'a' && ch <= L'z') ||
-           ch == L'-';
-}
-
-std::wstring NormalizeSupporterCode(const std::wstring& value) {
-    std::wstring normalized;
-    for (size_t i = 0; i < value.size(); ++i) {
-        wchar_t ch = value[i];
-        if (!IsSupporterCodeChar(ch)) continue;
-        if (ch >= L'a' && ch <= L'z') ch = static_cast<wchar_t>(ch - L'a' + L'A');
-        normalized.push_back(ch);
-    }
-    return normalized;
-}
-
-UINT32 SupporterHash(const std::wstring& token) {
-    const char salt[] = "HdrSdrBrightnessSupporterV1";
-    UINT32 hash = 2166136261u;
-    for (size_t i = 0; i < sizeof(salt) - 1; ++i) {
-        hash ^= static_cast<BYTE>(salt[i]);
-        hash *= 16777619u;
-    }
-    for (size_t i = 0; i < token.size(); ++i) {
-        hash ^= static_cast<BYTE>(token[i] & 0xff);
-        hash *= 16777619u;
-    }
-    return hash;
-}
-
-int HexValue(wchar_t ch) {
-    if (ch >= L'0' && ch <= L'9') return ch - L'0';
-    if (ch >= L'A' && ch <= L'F') return ch - L'A' + 10;
-    if (ch >= L'a' && ch <= L'f') return ch - L'a' + 10;
-    return -1;
-}
-
-bool IsValidSupporterCode(const std::wstring& value) {
-    std::wstring code = NormalizeSupporterCode(value);
-    const std::wstring prefix = L"HDRSDR-";
-    if (code.size() != prefix.size() + 8 + 1 + 4) return false;
-    if (code.compare(0, prefix.size(), prefix) != 0) return false;
-    if (code[prefix.size() + 8] != L'-') return false;
-
-    std::wstring token = code.substr(prefix.size(), 8);
-    for (size_t i = 0; i < token.size(); ++i) {
-        wchar_t ch = token[i];
-        if (!((ch >= L'0' && ch <= L'9') || (ch >= L'A' && ch <= L'Z'))) return false;
-    }
-
-    int checksum = 0;
-    for (size_t i = prefix.size() + 9; i < code.size(); ++i) {
-        int valuePart = HexValue(code[i]);
-        if (valuePart < 0) return false;
-        checksum = (checksum << 4) | valuePart;
-    }
-    return checksum == static_cast<int>(SupporterHash(token) & 0xffffu);
 }
 
 bool HasSupporterBadge() {
@@ -1262,659 +717,29 @@ int SupporterBadgeLeft(HDC dc) {
     return 28 + 584 - kSettingsCardPadding - SupporterBadgeWidth(dc);
 }
 
-bool ReadBinaryValue(HKEY root, const wchar_t* keyPath, const wchar_t* valueName, std::vector<BYTE>* data) {
-    HKEY key = NULL;
-    LONG rc = RegOpenKeyExW(root, keyPath, 0, KEY_READ, &key);
-    if (rc != ERROR_SUCCESS) return false;
-
-    DWORD type = 0;
-    DWORD size = 0;
-    rc = RegQueryValueExW(key, valueName, NULL, &type, NULL, &size);
-    if (rc != ERROR_SUCCESS || type != REG_BINARY || size == 0) {
-        RegCloseKey(key);
-        return false;
-    }
-
-    std::vector<BYTE> buffer(size);
-    rc = RegQueryValueExW(key, valueName, NULL, &type, buffer.data(), &size);
-    RegCloseKey(key);
-    if (rc != ERROR_SUCCESS || type != REG_BINARY) return false;
-
-    buffer.resize(size);
-    data->swap(buffer);
-    return true;
-}
-
-enum StoreStartupTaskState {
-    StoreStartupTaskDisabled = 0,
-    StoreStartupTaskDisabledByUser = 1,
-    StoreStartupTaskEnabled = 2,
-    StoreStartupTaskDisabledByPolicy = 3,
-    StoreStartupTaskEnabledByPolicy = 4
-};
-
-enum StoreAsyncStatus {
-    StoreAsyncStarted = 0,
-    StoreAsyncCompleted = 1,
-    StoreAsyncCanceled = 2,
-    StoreAsyncError = 3
-};
-
-typedef void* StoreHString;
-typedef int StoreTrustLevel;
-typedef HRESULT(WINAPI* RoInitializeFn)(int);
-typedef void(WINAPI* RoUninitializeFn)();
-typedef HRESULT(WINAPI* RoGetActivationFactoryFn)(StoreHString, REFIID, void**);
-typedef HRESULT(WINAPI* WindowsCreateStringFn)(PCWSTR, UINT32, StoreHString*);
-typedef HRESULT(WINAPI* WindowsDeleteStringFn)(StoreHString);
-typedef LONG(WINAPI* GetCurrentPackageFamilyNameFn)(UINT32*, PWSTR);
-
-struct StoreIStartupTask;
-struct StoreIStartupTaskStatics;
-struct StoreIAsyncInfo;
-struct StoreIAsyncOperationStartupTask;
-struct StoreIAsyncOperationStartupTaskState;
-
-struct StoreIStartupTaskVtbl {
-    HRESULT(STDMETHODCALLTYPE* QueryInterface)(StoreIStartupTask*, REFIID, void**);
-    ULONG(STDMETHODCALLTYPE* AddRef)(StoreIStartupTask*);
-    ULONG(STDMETHODCALLTYPE* Release)(StoreIStartupTask*);
-    HRESULT(STDMETHODCALLTYPE* GetIids)(StoreIStartupTask*, ULONG*, IID**);
-    HRESULT(STDMETHODCALLTYPE* GetRuntimeClassName)(StoreIStartupTask*, StoreHString*);
-    HRESULT(STDMETHODCALLTYPE* GetTrustLevel)(StoreIStartupTask*, StoreTrustLevel*);
-    HRESULT(STDMETHODCALLTYPE* RequestEnableAsync)(StoreIStartupTask*, StoreIAsyncOperationStartupTaskState**);
-    HRESULT(STDMETHODCALLTYPE* Disable)(StoreIStartupTask*);
-    HRESULT(STDMETHODCALLTYPE* get_State)(StoreIStartupTask*, int*);
-    HRESULT(STDMETHODCALLTYPE* get_TaskId)(StoreIStartupTask*, StoreHString*);
-};
-
-struct StoreIStartupTask {
-    const StoreIStartupTaskVtbl* lpVtbl;
-};
-
-struct StoreIStartupTaskStaticsVtbl {
-    HRESULT(STDMETHODCALLTYPE* QueryInterface)(StoreIStartupTaskStatics*, REFIID, void**);
-    ULONG(STDMETHODCALLTYPE* AddRef)(StoreIStartupTaskStatics*);
-    ULONG(STDMETHODCALLTYPE* Release)(StoreIStartupTaskStatics*);
-    HRESULT(STDMETHODCALLTYPE* GetIids)(StoreIStartupTaskStatics*, ULONG*, IID**);
-    HRESULT(STDMETHODCALLTYPE* GetRuntimeClassName)(StoreIStartupTaskStatics*, StoreHString*);
-    HRESULT(STDMETHODCALLTYPE* GetTrustLevel)(StoreIStartupTaskStatics*, StoreTrustLevel*);
-    HRESULT(STDMETHODCALLTYPE* GetForCurrentPackageAsync)(StoreIStartupTaskStatics*, void**);
-    HRESULT(STDMETHODCALLTYPE* GetAsync)(StoreIStartupTaskStatics*, StoreHString, StoreIAsyncOperationStartupTask**);
-};
-
-struct StoreIStartupTaskStatics {
-    const StoreIStartupTaskStaticsVtbl* lpVtbl;
-};
-
-struct StoreIAsyncInfoVtbl {
-    HRESULT(STDMETHODCALLTYPE* QueryInterface)(StoreIAsyncInfo*, REFIID, void**);
-    ULONG(STDMETHODCALLTYPE* AddRef)(StoreIAsyncInfo*);
-    ULONG(STDMETHODCALLTYPE* Release)(StoreIAsyncInfo*);
-    HRESULT(STDMETHODCALLTYPE* GetIids)(StoreIAsyncInfo*, ULONG*, IID**);
-    HRESULT(STDMETHODCALLTYPE* GetRuntimeClassName)(StoreIAsyncInfo*, StoreHString*);
-    HRESULT(STDMETHODCALLTYPE* GetTrustLevel)(StoreIAsyncInfo*, StoreTrustLevel*);
-    HRESULT(STDMETHODCALLTYPE* get_Id)(StoreIAsyncInfo*, UINT32*);
-    HRESULT(STDMETHODCALLTYPE* get_Status)(StoreIAsyncInfo*, int*);
-    HRESULT(STDMETHODCALLTYPE* get_ErrorCode)(StoreIAsyncInfo*, HRESULT*);
-    HRESULT(STDMETHODCALLTYPE* Cancel)(StoreIAsyncInfo*);
-    HRESULT(STDMETHODCALLTYPE* Close)(StoreIAsyncInfo*);
-};
-
-struct StoreIAsyncInfo {
-    const StoreIAsyncInfoVtbl* lpVtbl;
-};
-
-struct StoreIAsyncOperationStartupTaskVtbl {
-    HRESULT(STDMETHODCALLTYPE* QueryInterface)(StoreIAsyncOperationStartupTask*, REFIID, void**);
-    ULONG(STDMETHODCALLTYPE* AddRef)(StoreIAsyncOperationStartupTask*);
-    ULONG(STDMETHODCALLTYPE* Release)(StoreIAsyncOperationStartupTask*);
-    HRESULT(STDMETHODCALLTYPE* GetIids)(StoreIAsyncOperationStartupTask*, ULONG*, IID**);
-    HRESULT(STDMETHODCALLTYPE* GetRuntimeClassName)(StoreIAsyncOperationStartupTask*, StoreHString*);
-    HRESULT(STDMETHODCALLTYPE* GetTrustLevel)(StoreIAsyncOperationStartupTask*, StoreTrustLevel*);
-    HRESULT(STDMETHODCALLTYPE* put_Completed)(StoreIAsyncOperationStartupTask*, void*);
-    HRESULT(STDMETHODCALLTYPE* get_Completed)(StoreIAsyncOperationStartupTask*, void**);
-    HRESULT(STDMETHODCALLTYPE* GetResults)(StoreIAsyncOperationStartupTask*, StoreIStartupTask**);
-};
-
-struct StoreIAsyncOperationStartupTask {
-    const StoreIAsyncOperationStartupTaskVtbl* lpVtbl;
-};
-
-struct StoreIAsyncOperationStartupTaskStateVtbl {
-    HRESULT(STDMETHODCALLTYPE* QueryInterface)(StoreIAsyncOperationStartupTaskState*, REFIID, void**);
-    ULONG(STDMETHODCALLTYPE* AddRef)(StoreIAsyncOperationStartupTaskState*);
-    ULONG(STDMETHODCALLTYPE* Release)(StoreIAsyncOperationStartupTaskState*);
-    HRESULT(STDMETHODCALLTYPE* GetIids)(StoreIAsyncOperationStartupTaskState*, ULONG*, IID**);
-    HRESULT(STDMETHODCALLTYPE* GetRuntimeClassName)(StoreIAsyncOperationStartupTaskState*, StoreHString*);
-    HRESULT(STDMETHODCALLTYPE* GetTrustLevel)(StoreIAsyncOperationStartupTaskState*, StoreTrustLevel*);
-    HRESULT(STDMETHODCALLTYPE* put_Completed)(StoreIAsyncOperationStartupTaskState*, void*);
-    HRESULT(STDMETHODCALLTYPE* get_Completed)(StoreIAsyncOperationStartupTaskState*, void**);
-    HRESULT(STDMETHODCALLTYPE* GetResults)(StoreIAsyncOperationStartupTaskState*, int*);
-};
-
-struct StoreIAsyncOperationStartupTaskState {
-    const StoreIAsyncOperationStartupTaskStateVtbl* lpVtbl;
-};
-
-struct StoreWinRtApi {
-    HMODULE module;
-    RoInitializeFn roInitialize;
-    RoUninitializeFn roUninitialize;
-    RoGetActivationFactoryFn roGetActivationFactory;
-    WindowsCreateStringFn createString;
-    WindowsDeleteStringFn deleteString;
-    bool initialized;
-
-    StoreWinRtApi()
-        : module(NULL),
-          roInitialize(NULL),
-          roUninitialize(NULL),
-          roGetActivationFactory(NULL),
-          createString(NULL),
-          deleteString(NULL),
-          initialized(false) {}
-};
-
-const GUID kIidStoreIStartupTaskStatics =
-    {0xee5b60bd, 0xa148, 0x41a7, {0xb2, 0x6e, 0xe8, 0xb8, 0x8a, 0x1e, 0x62, 0xf8}};
-const GUID kIidStoreIAsyncInfo =
-    {0x00000036, 0x0000, 0x0000, {0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
-
-bool LoadStoreWinRtApi(StoreWinRtApi* api) {
-    if (!api) return false;
-    api->module = LoadLibraryW(L"combase.dll");
-    if (!api->module) return false;
-
-    api->roInitialize = reinterpret_cast<RoInitializeFn>(GetProcAddress(api->module, "RoInitialize"));
-    api->roUninitialize = reinterpret_cast<RoUninitializeFn>(GetProcAddress(api->module, "RoUninitialize"));
-    api->roGetActivationFactory = reinterpret_cast<RoGetActivationFactoryFn>(GetProcAddress(api->module, "RoGetActivationFactory"));
-    api->createString = reinterpret_cast<WindowsCreateStringFn>(GetProcAddress(api->module, "WindowsCreateString"));
-    api->deleteString = reinterpret_cast<WindowsDeleteStringFn>(GetProcAddress(api->module, "WindowsDeleteString"));
-
-    if (!api->roInitialize || !api->roUninitialize || !api->roGetActivationFactory ||
-        !api->createString || !api->deleteString) {
-        FreeLibrary(api->module);
-        api->module = NULL;
-        return false;
-    }
-
-    HRESULT hr = api->roInitialize(0);
-    api->initialized = SUCCEEDED(hr);
-    if (hr == RPC_E_CHANGED_MODE) {
-        api->initialized = false;
-        return true;
-    }
-    if (FAILED(hr)) {
-        FreeLibrary(api->module);
-        api->module = NULL;
-        return false;
-    }
-    return true;
-}
-
-void UnloadStoreWinRtApi(StoreWinRtApi* api) {
-    if (!api) return;
-    if (api->initialized && api->roUninitialize) api->roUninitialize();
-    if (api->module) FreeLibrary(api->module);
-}
-
-bool StoreCreateHString(StoreWinRtApi* api, const wchar_t* text, StoreHString* value) {
-    if (!api || !api->createString || !text || !value) return false;
-    *value = NULL;
-    return SUCCEEDED(api->createString(text, static_cast<UINT32>(wcslen(text)), value));
-}
-
-void StoreDeleteHString(StoreWinRtApi* api, StoreHString value) {
-    if (api && api->deleteString && value) api->deleteString(value);
-}
-
-bool WaitStoreAsync(void* operation, DWORD timeoutMs) {
-    if (!operation) return false;
-
-    StoreIAsyncInfo* info = NULL;
-    HRESULT hr = reinterpret_cast<IUnknown*>(operation)->QueryInterface(kIidStoreIAsyncInfo,
-                                                                        reinterpret_cast<void**>(&info));
-    if (FAILED(hr) || !info) return false;
-
-    DWORD startTick = GetTickCount();
-    bool ok = false;
-    for (;;) {
-        int status = StoreAsyncStarted;
-        hr = info->lpVtbl->get_Status(info, &status);
-        if (FAILED(hr)) break;
-
-        if (status == StoreAsyncCompleted) {
-            ok = true;
-            break;
-        }
-        if (status == StoreAsyncCanceled || status == StoreAsyncError) {
-            break;
-        }
-        if (GetTickCount() - startTick > timeoutMs) {
-            info->lpVtbl->Cancel(info);
-            break;
-        }
-        Sleep(25);
-    }
-
-    info->lpVtbl->Close(info);
-    info->lpVtbl->Release(info);
-    return ok;
-}
-
-bool GetCurrentPackageFamilyNameValue(std::wstring* packageFamilyName) {
-    if (!packageFamilyName) return false;
-
-    HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
-    if (!kernel) return false;
-
-    GetCurrentPackageFamilyNameFn getCurrentPackageFamilyName =
-        reinterpret_cast<GetCurrentPackageFamilyNameFn>(
-            GetProcAddress(kernel, "GetCurrentPackageFamilyName"));
-    if (!getCurrentPackageFamilyName) return false;
-
-    UINT32 length = 0;
-    LONG rc = getCurrentPackageFamilyName(&length, NULL);
-    if (rc != ERROR_INSUFFICIENT_BUFFER || length == 0) return false;
-
-    std::vector<wchar_t> buffer(length, L'\0');
-    rc = getCurrentPackageFamilyName(&length, buffer.data());
-    if (rc != ERROR_SUCCESS || length == 0 || buffer[0] == L'\0') return false;
-
-    *packageFamilyName = buffer.data();
-    return true;
-}
-
-bool TryReadStoreStartupStateFromRegistry(int* state) {
-    if (!state) return false;
-
-    std::wstring packageFamilyName;
-    if (!GetCurrentPackageFamilyNameValue(&packageFamilyName)) return false;
-
-    std::wstring keyPath =
-        L"Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\"
-        L"AppModel\\SystemAppData\\" +
-        packageFamilyName + L"\\" + kStoreStartupTaskId;
-
-    DWORD value = 0;
-    if (!ReadDwordValue(HKEY_CURRENT_USER, keyPath.c_str(), L"State", &value)) return false;
-
-    *state = static_cast<int>(value);
-    return true;
-}
-
-bool GetStoreStartupTask(StoreWinRtApi* api, StoreIStartupTask** task) {
-    if (!api || !task) return false;
-    *task = NULL;
-
-    StoreHString className = NULL;
-    StoreHString taskId = NULL;
-    StoreIStartupTaskStatics* statics = NULL;
-    StoreIAsyncOperationStartupTask* operation = NULL;
-
-    bool ok = false;
-    HRESULT hr = E_FAIL;
-    if (!StoreCreateHString(api, L"Windows.ApplicationModel.StartupTask", &className)) goto cleanup;
-    hr = api->roGetActivationFactory(className, kIidStoreIStartupTaskStatics,
-                                     reinterpret_cast<void**>(&statics));
-    if (FAILED(hr) || !statics) goto cleanup;
-    if (!StoreCreateHString(api, kStoreStartupTaskId, &taskId)) goto cleanup;
-
-    hr = statics->lpVtbl->GetAsync(statics, taskId, &operation);
-    if (FAILED(hr) || !operation) goto cleanup;
-    if (!WaitStoreAsync(operation, 3000)) goto cleanup;
-
-    hr = operation->lpVtbl->GetResults(operation, task);
-    ok = SUCCEEDED(hr) && *task != NULL;
-
-cleanup:
-    if (operation) operation->lpVtbl->Release(operation);
-    if (statics) statics->lpVtbl->Release(statics);
-    StoreDeleteHString(api, taskId);
-    StoreDeleteHString(api, className);
-    return ok;
-}
-
-bool IsStoreStartupEnabled() {
-    StoreWinRtApi api;
-    bool apiLoaded = LoadStoreWinRtApi(&api);
-
-    StoreIStartupTask* task = NULL;
-    int state = StoreStartupTaskDisabled;
-    bool hasState = false;
-    bool enabled = false;
-    if (apiLoaded && GetStoreStartupTask(&api, &task)) {
-        if (SUCCEEDED(task->lpVtbl->get_State(task, &state))) {
-            hasState = true;
-        }
-        task->lpVtbl->Release(task);
-    }
-
-    if (!hasState) {
-        hasState = TryReadStoreStartupStateFromRegistry(&state);
-    }
-
-    if (hasState) {
-        enabled = state == StoreStartupTaskEnabled || state == StoreStartupTaskEnabledByPolicy;
-    }
-
-    if (apiLoaded) UnloadStoreWinRtApi(&api);
-    return enabled;
-}
-
-bool SetStoreStartupEnabled(bool enabled) {
-    StoreWinRtApi api;
-    if (!LoadStoreWinRtApi(&api)) return false;
-
-    StoreIStartupTask* task = NULL;
-    bool ok = false;
-    if (!GetStoreStartupTask(&api, &task)) goto cleanup;
-
-    if (!enabled) {
-        ok = SUCCEEDED(task->lpVtbl->Disable(task));
-        goto cleanup;
-    }
-
-    {
-        StoreIAsyncOperationStartupTaskState* operation = NULL;
-        HRESULT hr = task->lpVtbl->RequestEnableAsync(task, &operation);
-        if (SUCCEEDED(hr) && operation && WaitStoreAsync(operation, 30000)) {
-            int state = StoreStartupTaskDisabled;
-            if (SUCCEEDED(operation->lpVtbl->GetResults(operation, &state))) {
-                ok = state == StoreStartupTaskEnabled || state == StoreStartupTaskEnabledByPolicy;
-            }
-        }
-        if (operation) operation->lpVtbl->Release(operation);
-    }
-
-cleanup:
-    if (task) task->lpVtbl->Release(task);
-    UnloadStoreWinRtApi(&api);
-    return ok;
-}
-
-bool IsRunKeyStartupEnabled() {
-    if (UseStoreStartupIntegration()) return false;
-
-    HKEY key = NULL;
-    LONG rc = RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_READ, &key);
-    if (rc != ERROR_SUCCESS) return false;
-
-    DWORD type = 0;
-    DWORD size = 0;
-    rc = RegQueryValueExW(key, kAppName, NULL, &type, NULL, &size);
-    if (rc == ERROR_SUCCESS && (type == REG_SZ || type == REG_EXPAND_SZ) && size > 0) {
-        RegCloseKey(key);
-        return true;
-    }
-
-    type = 0;
-    size = 0;
-    rc = RegQueryValueExW(key, kLegacySyncAppName, NULL, &type, NULL, &size);
-    if (rc == ERROR_SUCCESS && (type == REG_SZ || type == REG_EXPAND_SZ) && size > 0) {
-        RegCloseKey(key);
-        return true;
-    }
-
-    type = 0;
-    size = 0;
-    rc = RegQueryValueExW(key, kLegacyOledAppName, NULL, &type, NULL, &size);
-    RegCloseKey(key);
-    return rc == ERROR_SUCCESS && (type == REG_SZ || type == REG_EXPAND_SZ) && size > 0;
-}
-
-void SetRunKeyStartupEnabled(bool enabled) {
-    if (UseStoreStartupIntegration()) return;
-
-    HKEY key = NULL;
-    LONG rc = RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, NULL, 0, KEY_SET_VALUE, NULL, &key, NULL);
-    if (rc != ERROR_SUCCESS) return;
-
-    if (enabled) {
-        std::wstring command = QuotePath(GetExePath()) + L" --background";
-        RegSetValueExW(key, kAppName, 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()),
-                       static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
-        RegDeleteValueW(key, kLegacySyncAppName);
-        RegDeleteValueW(key, kLegacyOledAppName);
-    } else {
-        RegDeleteValueW(key, kAppName);
-        RegDeleteValueW(key, kLegacySyncAppName);
-        RegDeleteValueW(key, kLegacyOledAppName);
-    }
-
-    RegCloseKey(key);
-}
-
-bool IsScheduledTaskStartupEnabled() {
-    if (UseStoreStartupIntegration()) return false;
-
-    std::wstring command = L"schtasks.exe /Query /TN " + QuoteCommandLineArgument(kStartupTaskName);
-    return RunHiddenCommand(command, 3000);
-}
-
-bool DeleteScheduledTaskStartup() {
-    if (UseStoreStartupIntegration()) return true;
-
-    if (!IsScheduledTaskStartupEnabled()) return true;
-    std::wstring command = L"schtasks.exe /Delete /TN " + QuoteCommandLineArgument(kStartupTaskName) + L" /F";
-    if (RunHiddenCommand(command, 5000)) return true;
-
-    std::wstring script =
-        L"Unregister-ScheduledTask -TaskName " + QuotePowerShellString(kStartupTaskName) +
-        L" -Confirm:$false -ErrorAction SilentlyContinue";
-    std::wstring powershell =
-        L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command " +
-        QuoteCommandLineArgument(script);
-    return RunHiddenCommand(powershell, 10000);
-}
-
-bool SetScheduledTaskStartupEnabled(bool enabled) {
-    if (UseStoreStartupIntegration()) return true;
-
-    if (!enabled) return DeleteScheduledTaskStartup();
-
-    std::wstring action = QuoteCommandLineArgument(GetExePath()) + L" --background";
-    std::wstring command =
-        L"schtasks.exe /Create /TN " + QuoteCommandLineArgument(kStartupTaskName) +
-        L" /SC ONLOGON /TR " + QuoteCommandLineArgument(action) +
-        L" /RL LIMITED /F";
-    if (RunHiddenCommand(command, 5000)) return true;
-
-    std::wstring script =
-        L"$ErrorActionPreference='Stop';"
-        L"$user=[System.Security.Principal.WindowsIdentity]::GetCurrent().Name;"
-        L"$action=New-ScheduledTaskAction -Execute " + QuotePowerShellString(GetExePath()) +
-        L" -Argument '--background';"
-        L"$trigger=New-ScheduledTaskTrigger -AtLogOn -User $user;"
-        L"$principal=New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited;"
-        L"$settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries "
-        L"-ExecutionTimeLimit (New-TimeSpan -Seconds 0);"
-        L"Register-ScheduledTask -TaskName " + QuotePowerShellString(kStartupTaskName) +
-        L" -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null";
-    std::wstring powershell =
-        L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command " +
-        QuoteCommandLineArgument(script);
-    return RunHiddenCommand(powershell, 15000);
-}
-
 bool IsStartupEnabled() {
-    if (UseStoreStartupIntegration()) return IsStoreStartupEnabled();
+    if (UseStoreStartupIntegration()) return startup_integration::IsStoreStartupEnabled();
 
-    return IsRunKeyStartupEnabled() || IsScheduledTaskStartupEnabled();
-}
-
-bool FileExists(const std::wstring& path) {
-    DWORD attrs = GetFileAttributesW(path.c_str());
-    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
-}
-
-bool IsWow64ProcessCurrent() {
-    typedef BOOL(WINAPI* IsWow64ProcessFn)(HANDLE, PBOOL);
-    HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
-    if (!kernel32) return false;
-
-    IsWow64ProcessFn fn = reinterpret_cast<IsWow64ProcessFn>(GetProcAddress(kernel32, "IsWow64Process"));
-    if (!fn) return false;
-
-    BOOL isWow64 = FALSE;
-    if (!fn(GetCurrentProcess(), &isWow64)) return false;
-    return isWow64 != FALSE;
-}
-
-std::wstring GetWindowsDirectoryPath() {
-    std::vector<wchar_t> buffer(MAX_PATH);
-    UINT length = GetWindowsDirectoryW(buffer.data(), static_cast<UINT>(buffer.size()));
-    if (length == 0) return L"C:\\Windows";
-    if (length >= buffer.size()) {
-        buffer.resize(length + 1);
-        length = GetWindowsDirectoryW(buffer.data(), static_cast<UINT>(buffer.size()));
-    }
-    return std::wstring(buffer.data(), length);
-}
-
-std::wstring GetCloudSettingsReaderPath() {
-    std::wstring windows = GetWindowsDirectoryPath();
-    std::wstring sysnative = windows + L"\\Sysnative\\readCloudDataSettings.exe";
-    if (IsWow64ProcessCurrent() && FileExists(sysnative)) return sysnative;
-
-    std::wstring system32 = windows + L"\\System32\\readCloudDataSettings.exe";
-    if (FileExists(system32)) return system32;
-
-    return L"";
-}
-
-bool ReadPipeAvailable(HANDLE pipe, std::string* output) {
-    DWORD available = 0;
-    if (!PeekNamedPipe(pipe, NULL, 0, NULL, &available, NULL)) return false;
-    if (available == 0) return true;
-
-    std::vector<char> buffer(available);
-    DWORD read = 0;
-    if (!ReadFile(pipe, buffer.data(), available, &read, NULL)) return false;
-    output->append(buffer.data(), buffer.data() + read);
-    return true;
-}
-
-bool RunProcessCapture(const std::wstring& commandLine, DWORD timeoutMs, std::string* output) {
-    SECURITY_ATTRIBUTES sa = {};
-    sa.nLength = sizeof(sa);
-    sa.bInheritHandle = TRUE;
-
-    HANDLE readPipe = NULL;
-    HANDLE writePipe = NULL;
-    if (!CreatePipe(&readPipe, &writePipe, &sa, 0)) return false;
-    SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
-
-    STARTUPINFOW si = {};
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
-    si.hStdOutput = writePipe;
-    si.hStdError = writePipe;
-    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-    si.wShowWindow = SW_HIDE;
-
-    PROCESS_INFORMATION pi = {};
-    std::vector<wchar_t> mutableCommand(commandLine.begin(), commandLine.end());
-    mutableCommand.push_back(L'\0');
-
-    BOOL created = CreateProcessW(NULL, mutableCommand.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW,
-                                  NULL, NULL, &si, &pi);
-    CloseHandle(writePipe);
-    if (!created) {
-        CloseHandle(readPipe);
-        return false;
-    }
-
-    DWORD startTick = GetTickCount();
-    bool timedOut = false;
-    for (;;) {
-        ReadPipeAvailable(readPipe, output);
-        DWORD wait = WaitForSingleObject(pi.hProcess, 25);
-        if (wait == WAIT_OBJECT_0) break;
-        if (GetTickCount() - startTick > timeoutMs) {
-            timedOut = true;
-            TerminateProcess(pi.hProcess, 1);
-            WaitForSingleObject(pi.hProcess, 500);
-            break;
-        }
-    }
-    ReadPipeAvailable(readPipe, output);
-
-    DWORD exitCode = 1;
-    GetExitCodeProcess(pi.hProcess, &exitCode);
-
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-    CloseHandle(readPipe);
-
-    return !timedOut && exitCode == 0;
-}
-
-bool ReadCloudDataSetting(const wchar_t* typeName, std::string* output) {
-    std::wstring reader = GetCloudSettingsReaderPath();
-    if (reader.empty()) return false;
-
-    std::wstring command = QuotePath(reader) + L" get -type:" + typeName;
-    output->clear();
-    return RunProcessCapture(command, 1500, output);
-}
-
-bool ContainsText(const std::string& text, const char* needle) {
-    return text.find(needle) != std::string::npos;
-}
-
-MaybeBool ReadNightLightSunsetScheduleViaCloudReader() {
-    std::string output;
-    if (!ReadCloudDataSetting(L"windows.data.bluelightreduction.settings", &output)) {
-        return MaybeBool();
-    }
-
-    bool scheduleTrue = ContainsText(output, "\"automaticOnSchedule\":true");
-    bool scheduleFalse = ContainsText(output, "\"automaticOnSchedule\":false");
-    bool sunsetTrue = ContainsText(output, "\"automaticOnSunset\":true");
-    bool sunsetFalse = ContainsText(output, "\"automaticOnSunset\":false");
-
-    if (scheduleTrue && sunsetTrue) return MaybeBool(true, true);
-    if (scheduleFalse || sunsetFalse) return MaybeBool(true, false);
-    return MaybeBool();
-}
-
-MaybeBool ReadNightLightActiveViaCloudReader() {
-    std::string output;
-    if (!ReadCloudDataSetting(L"windows.data.bluelightreduction.bluelightreductionstate", &output)) {
-        return MaybeBool();
-    }
-
-    if (ContainsText(output, "\"state\":0")) return MaybeBool(true, true);
-    if (ContainsText(output, "\"state\":1")) return MaybeBool(true, false);
-    return MaybeBool();
+    return startup_integration::IsPortableStartupEnabled();
 }
 
 bool TrySetStartupEnabled(bool enabled) {
     if (UseStoreStartupIntegration()) {
-        return SetStoreStartupEnabled(enabled);
+        return startup_integration::SetStoreStartupEnabled(enabled);
     }
 
-    if (enabled) {
-        SetScheduledTaskStartupEnabled(true);
-        SetRunKeyStartupEnabled(true);
-    } else {
-        SetScheduledTaskStartupEnabled(false);
-        SetRunKeyStartupEnabled(false);
-    }
-    return IsStartupEnabled() == enabled;
+    return startup_integration::SetPortableStartupEnabled(enabled);
 }
 
 static DWORD WINAPI PortableStartupRepairThread(LPVOID) {
-    if (!UseStoreStartupIntegration() && g_config.startWithWindows && !IsScheduledTaskStartupEnabled()) {
-        SetScheduledTaskStartupEnabled(true);
+    if (!UseStoreStartupIntegration()) {
+        startup_integration::RepairPortableScheduledTaskStartupIfNeeded(g_config.startWithWindows);
     }
     return 0;
 }
 
 void StartPortableStartupRepairThread() {
-    if (UseStoreStartupIntegration() || !g_config.startWithWindows || IsScheduledTaskStartupEnabled()) return;
+    if (UseStoreStartupIntegration() || !g_config.startWithWindows) return;
     HANDLE thread = CreateThread(NULL, 0, PortableStartupRepairThread, NULL, 0, NULL);
     if (thread) CloseHandle(thread);
 }
@@ -1942,7 +767,7 @@ void LoadConfig(bool refreshStartupState = false) {
     std::wstring stringValue;
     if (IsSupportFeatureAvailable() &&
         ReadStringValue(HKEY_CURRENT_USER, kConfigKey, L"SupporterCode", &stringValue)) {
-        g_config.supporterCode = NormalizeSupporterCode(stringValue);
+        g_config.supporterCode = supporter_code::Normalize(stringValue);
     }
     if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"Language", &value)) {
         g_config.language = NormalizeLanguageChoice(static_cast<int>(value));
@@ -1960,13 +785,13 @@ void LoadConfig(bool refreshStartupState = false) {
         g_config.dayStartMinute = ClampInt(static_cast<int>(value), 0, 59);
     }
     if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"ScreenshotHotkeyMod", &value)) {
-        g_config.screenshotHotkeyMod = value & (MOD_ALT | MOD_CONTROL | MOD_SHIFT | MOD_WIN);
+        g_config.screenshotHotkeyMod = value & app_hotkeys::ModifierMask();
     }
     if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"ScreenshotHotkeyVk", &value)) {
         g_config.screenshotHotkeyVk = value;
     }
     if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"FullscreenHotkeyMod", &value)) {
-        g_config.fullscreenHotkeyMod = value & (MOD_ALT | MOD_CONTROL | MOD_SHIFT | MOD_WIN);
+        g_config.fullscreenHotkeyMod = value & app_hotkeys::ModifierMask();
     }
     if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"FullscreenHotkeyVk", &value)) {
         g_config.fullscreenHotkeyVk = value;
@@ -2012,403 +837,39 @@ void SaveConfig() {
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"StartWithWindows", g_config.startWithWindows ? 1 : 0);
 }
 
-const wchar_t* const kNightLightStateKeys[] = {
-    L"Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\DefaultAccount\\Current\\default$windows.data.bluelightreduction.bluelightreductionstate\\windows.data.bluelightreduction.bluelightreductionstate",
-    L"Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\DefaultAccount\\Cloud\\default$windows.data.bluelightreduction.bluelightreductionstate\\windows.data.bluelightreduction.bluelightreductionstate",
-    L"Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\Cache\\DefaultAccount\\$$windows.data.bluelightreduction.bluelightreductionstate\\Current"
-};
-
-const wchar_t* const kNightLightSettingsKeys[] = {
-    L"Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\DefaultAccount\\Current\\default$windows.data.bluelightreduction.settings\\windows.data.bluelightreduction.settings",
-    L"Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\DefaultAccount\\Cloud\\default$windows.data.bluelightreduction.settings\\windows.data.bluelightreduction.settings",
-    L"Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\Cache\\DefaultAccount\\$$windows.data.bluelightreduction.settings\\Current"
-};
-
-bool ReadFirstBinary(const wchar_t* const* keys, size_t count, std::vector<BYTE>* data) {
-    for (size_t i = 0; i < count; ++i) {
-        if (ReadBinaryValue(HKEY_CURRENT_USER, keys[i], L"Data", data)) return true;
-    }
-    return false;
-}
-
-bool ContainsSequence(const std::vector<BYTE>& data, const BYTE* seq, size_t seqSize, size_t start, size_t end) {
-    if (seqSize == 0 || data.size() < seqSize || start >= data.size()) return false;
-    end = std::min(end, data.size());
-    if (end < seqSize) return false;
-    for (size_t i = start; i + seqSize <= end; ++i) {
-        bool matched = true;
-        for (size_t j = 0; j < seqSize; ++j) {
-            if (data[i + j] != seq[j]) {
-                matched = false;
-                break;
-            }
-        }
-        if (matched) return true;
-    }
-    return false;
-}
-
-MaybeBool ReadNightLightActive() {
-    std::vector<BYTE> data;
-    if (!ReadFirstBinary(kNightLightStateKeys, sizeof(kNightLightStateKeys) / sizeof(kNightLightStateKeys[0]), &data)) {
-        return MaybeBool();
-    }
-
-    const BYTE marker[] = {0x43, 0x42, 0x01, 0x00};
-    const BYTE activeMarker[] = {0x10, 0x00};
-    bool sawMarker = false;
-
-    for (size_t markerPos = 0; markerPos + sizeof(marker) <= data.size(); ++markerPos) {
-        bool markerMatched = true;
-        for (size_t i = 0; i < sizeof(marker); ++i) {
-            if (data[markerPos + i] != marker[i]) {
-                markerMatched = false;
-                break;
-            }
-        }
-        if (!markerMatched) continue;
-
-        sawMarker = true;
-        size_t start = markerPos + sizeof(marker);
-        size_t end = std::min(start + 10, data.size());
-        if (ContainsSequence(data, activeMarker, sizeof(activeMarker), start, end)) {
-            return MaybeBool(true, true);
-        }
-    }
-
-    // Known Windows 10/11 encodings remove the 10 00 field when Night Light is off.
-    if (sawMarker) {
-        return MaybeBool(true, false);
-    }
-
-    return MaybeBool();
-}
-
-MaybeBool NightLightLooksLikeManualSchedule() {
-    std::vector<BYTE> data;
-    if (!ReadFirstBinary(kNightLightSettingsKeys, sizeof(kNightLightSettingsKeys) / sizeof(kNightLightSettingsKeys[0]), &data)) {
-        return MaybeBool();
-    }
-
-    const BYTE manualOnField[] = {0xCA, 0x14, 0x0E};
-    const BYTE manualOffField[] = {0xCA, 0x1E, 0x0E};
-    bool hasManualTimes =
-        ContainsSequence(data, manualOnField, sizeof(manualOnField), 0, data.size()) &&
-        ContainsSequence(data, manualOffField, sizeof(manualOffField), 0, data.size());
-
-    return MaybeBool(true, hasManualTimes);
-}
-
-MaybeBool GetNightLightSunsetScheduleCached() {
-    if (!g_sunsetScheduleCacheValid) {
-        g_cachedSunsetSchedule = ReadNightLightSunsetScheduleViaCloudReader();
-        g_sunsetScheduleCacheValid = true;
-    }
-    return g_cachedSunsetSchedule;
-}
-
-MaybeBool GetNightLightActiveCached() {
-    if (!g_nightLightActiveCacheValid) {
-        g_cachedNightLightActive = ReadNightLightActive();
-        if (!g_cachedNightLightActive.known) {
-            g_cachedNightLightActive = ReadNightLightActiveViaCloudReader();
-        }
-        g_nightLightActiveCacheValid = true;
-    }
-    return g_cachedNightLightActive;
-}
-
-MaybeBool NightLightLooksLikeManualScheduleCached() {
-    if (!g_manualScheduleCacheValid) {
-        g_cachedManualSchedule = NightLightLooksLikeManualSchedule();
-        g_manualScheduleCacheValid = true;
-    }
-    return g_cachedManualSchedule;
+night_mode::Schedule CurrentNightSchedule() {
+    night_mode::Schedule schedule = {
+        g_config.followNightLight,
+        g_config.nightStartHour,
+        g_config.nightStartMinute,
+        g_config.dayStartHour,
+        g_config.dayStartMinute
+    };
+    return schedule;
 }
 
 void InvalidateNightLightScheduleCache() {
-    g_sunsetScheduleCacheValid = false;
-    g_nightLightActiveCacheValid = false;
-    g_manualScheduleCacheValid = false;
+    night_mode::InvalidateScheduleCache();
 }
 
 bool CanFollowWindowsNightLight() {
-    MaybeBool schedule = GetNightLightSunsetScheduleCached();
-    return schedule.known && schedule.value;
-}
-
-bool IsFixedNightNow() {
-    SYSTEMTIME local = {};
-    GetLocalTime(&local);
-    int now = local.wHour * 60 + local.wMinute;
-    int nightStart = g_config.nightStartHour * 60 + g_config.nightStartMinute;
-    int dayStart = g_config.dayStartHour * 60 + g_config.dayStartMinute;
-
-    if (nightStart == dayStart) return false;
-    if (nightStart < dayStart) {
-        return now >= nightStart && now < dayStart;
-    }
-    return now >= nightStart || now < dayStart;
-}
-
-std::wstring FormatTwoDigit(int value) {
-    std::wstringstream ss;
-    if (value < 10) ss << L"0";
-    ss << value;
-    return ss.str();
+    return night_mode::CanFollowWindowsNightLight();
 }
 
 NightDecision DecideNight() {
-    if (g_config.followNightLight) {
-        MaybeBool sunsetSchedule = GetNightLightSunsetScheduleCached();
-        if (sunsetSchedule.known && sunsetSchedule.value) {
-            MaybeBool nightLight = GetNightLightActiveCached();
-            if (nightLight.known) {
-                NightDecision decision;
-                decision.night = nightLight.value;
-                decision.source = T(TxtSourceNightLight);
-                return decision;
-            }
-        } else if (!sunsetSchedule.known) {
-            MaybeBool manualSchedule = NightLightLooksLikeManualScheduleCached();
-            if (!manualSchedule.known || !manualSchedule.value) {
-                MaybeBool nightLight = GetNightLightActiveCached();
-                if (nightLight.known) {
-                    NightDecision decision;
-                    decision.night = nightLight.value;
-                    decision.source = T(TxtSourceNightLight);
-                    return decision;
-                }
-            }
-        }
-
-    }
+    night_mode::Decision raw = night_mode::Decide(CurrentNightSchedule());
 
     NightDecision decision;
-    decision.night = IsFixedNightNow();
-    decision.source = F(TxtFixedScheduleSource,
-                        {T(TxtSourceFixed),
-                         FormatTwoDigit(g_config.nightStartHour) + L":" + FormatTwoDigit(g_config.nightStartMinute),
-                         FormatTwoDigit(g_config.dayStartHour) + L":" + FormatTwoDigit(g_config.dayStartMinute)});
+    decision.night = raw.night;
+    if (raw.source == night_mode::DecisionSourceWindowsNightLight) {
+        decision.source = T(TxtSourceNightLight);
+    } else {
+        decision.source = F(TxtFixedScheduleSource,
+                            {T(TxtSourceFixed),
+                             night_mode::TimeText(g_config.nightStartHour, g_config.nightStartMinute),
+                             night_mode::TimeText(g_config.dayStartHour, g_config.dayStartMinute)});
+    }
     return decision;
-}
-
-bool LoadDisplayConfigApi(DisplayConfigApi* api) {
-    HMODULE user32 = GetModuleHandleW(L"user32.dll");
-    if (!user32) user32 = LoadLibraryW(L"user32.dll");
-    if (!user32) return false;
-
-    api->getBufferSizes = reinterpret_cast<GetDisplayConfigBufferSizesFn>(GetProcAddress(user32, "GetDisplayConfigBufferSizes"));
-    api->query = reinterpret_cast<QueryDisplayConfigFn>(GetProcAddress(user32, "QueryDisplayConfig"));
-    api->getDeviceInfo = reinterpret_cast<DisplayConfigGetDeviceInfoFn>(GetProcAddress(user32, "DisplayConfigGetDeviceInfo"));
-    api->setDeviceInfo = reinterpret_cast<DisplayConfigSetDeviceInfoFn>(GetProcAddress(user32, "DisplayConfigSetDeviceInfo"));
-
-    return api->getBufferSizes && api->query && api->getDeviceInfo && api->setDeviceInfo;
-}
-
-bool QueryActivePaths(DisplayConfigApi* api, std::vector<AppDisplayConfigPathInfo>* paths) {
-    UINT32 pathCount = 0;
-    UINT32 modeCount = 0;
-    LONG rc = api->getBufferSizes(kQdcOnlyActivePaths, &pathCount, &modeCount);
-    if (rc != ERROR_SUCCESS || pathCount == 0) return false;
-
-    for (int attempt = 0; attempt < 3; ++attempt) {
-        std::vector<AppDisplayConfigPathInfo> pathBuffer(pathCount);
-        std::vector<AppDisplayConfigModeInfo> modeBuffer(modeCount);
-        UINT32 queryPathCount = pathCount;
-        UINT32 queryModeCount = modeCount;
-        rc = api->query(kQdcOnlyActivePaths, &queryPathCount, pathBuffer.data(), &queryModeCount, modeBuffer.data(), NULL);
-        if (rc == ERROR_SUCCESS) {
-            pathBuffer.resize(queryPathCount);
-            paths->swap(pathBuffer);
-            return true;
-        }
-        if (rc != ERROR_INSUFFICIENT_BUFFER) return false;
-        rc = api->getBufferSizes(kQdcOnlyActivePaths, &pathCount, &modeCount);
-        if (rc != ERROR_SUCCESS) return false;
-    }
-
-    return false;
-}
-
-bool IsHdrEnabled(DisplayConfigApi* api, const AppDisplayConfigPathInfo& path) {
-    AppDisplayConfigGetAdvancedColorInfo info = {};
-    info.header.type = kDisplayConfigGetAdvancedColorInfo;
-    info.header.size = sizeof(info);
-    info.header.adapterId = path.targetInfo.adapterId;
-    info.header.id = path.targetInfo.id;
-
-    LONG rc = api->getDeviceInfo(&info.header);
-    if (rc != ERROR_SUCCESS) return false;
-    return (info.value & 0x2u) != 0;
-}
-
-bool GetSdrWhiteLevel(DisplayConfigApi* api, const AppDisplayConfigPathInfo& path, UINT32* level) {
-    AppDisplayConfigSdrWhiteLevel info = {};
-    info.header.type = kDisplayConfigGetSdrWhiteLevel;
-    info.header.size = sizeof(info);
-    info.header.adapterId = path.targetInfo.adapterId;
-    info.header.id = path.targetInfo.id;
-
-    LONG rc = api->getDeviceInfo(&info.header);
-    if (rc != ERROR_SUCCESS) return false;
-    *level = info.SDRWhiteLevel;
-    return true;
-}
-
-LONG SetSdrWhiteLevel(DisplayConfigApi* api, const AppDisplayConfigPathInfo& path, UINT32 level) {
-    AppDisplayConfigSetSdrWhiteLevel info = {};
-    info.header.type = kDisplayConfigSetSdrWhiteLevel;
-    info.header.size = sizeof(info);
-    info.header.adapterId = path.targetInfo.adapterId;
-    info.header.id = path.targetInfo.id;
-    info.SDRWhiteLevel = level;
-    info.finalValue = 1;
-
-    return api->setDeviceInfo(&info.header);
-}
-
-struct DwmFallbackContext {
-    DwmpSdrToHdrBoostFn fn;
-    double boost;
-    int successCount;
-};
-
-BOOL CALLBACK ApplyDwmFallbackToMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM param) {
-    DwmFallbackContext* context = reinterpret_cast<DwmFallbackContext*>(param);
-    HRESULT hr = context->fn(monitor, context->boost);
-    if (SUCCEEDED(hr)) ++context->successCount;
-    return TRUE;
-}
-
-bool ApplyDwmFallback(UINT32 sdrLevel, int* successCount) {
-    HMODULE dwmapi = LoadLibraryW(L"dwmapi.dll");
-    if (!dwmapi) return false;
-
-    DwmpSdrToHdrBoostFn fn = reinterpret_cast<DwmpSdrToHdrBoostFn>(GetProcAddress(dwmapi, MAKEINTRESOURCEA(171)));
-    if (!fn) {
-        FreeLibrary(dwmapi);
-        return false;
-    }
-
-    DwmFallbackContext context = {};
-    context.fn = fn;
-    context.boost = static_cast<double>(sdrLevel) / 1000.0;
-    context.successCount = 0;
-    EnumDisplayMonitors(NULL, NULL, ApplyDwmFallbackToMonitor, reinterpret_cast<LPARAM>(&context));
-    FreeLibrary(dwmapi);
-
-    if (successCount) *successCount = context.successCount;
-    return context.successCount > 0;
-}
-
-UINT32 BrightnessPercentToSdrLevel(int brightness) {
-    brightness = ClampInt(brightness, 0, 100);
-    return 1000u + static_cast<UINT32>(brightness) * 50u;
-}
-
-UINT32 MoveLevelToward(UINT32 current, UINT32 target, UINT32 step) {
-    if (current == target) return target;
-    if (current < target) {
-        UINT32 delta = target - current;
-        return delta <= step ? target : current + step;
-    }
-    UINT32 delta = current - target;
-    return delta <= step ? target : current - step;
-}
-
-ApplyResult ApplySdrLevelStep(UINT32 targetLevel, bool smooth) {
-    ApplyResult result;
-    result.complete = true;
-
-    DisplayConfigApi api = {};
-    if (LoadDisplayConfigApi(&api)) {
-        std::vector<AppDisplayConfigPathInfo> paths;
-        if (QueryActivePaths(&api, &paths)) {
-            for (size_t i = 0; i < paths.size(); ++i) {
-                const AppDisplayConfigPathInfo& path = paths[i];
-                if ((path.flags & kDisplayConfigPathActive) == 0 || !path.targetInfo.targetAvailable) continue;
-                if (!IsHdrEnabled(&api, path)) continue;
-
-                ++result.targetCount;
-
-                UINT32 currentLevel = 0;
-                bool hasCurrent = GetSdrWhiteLevel(&api, path, &currentLevel);
-                if (hasCurrent && currentLevel == targetLevel) {
-                    ++result.successCount;
-                    continue;
-                }
-
-                result.complete = false;
-                UINT32 nextLevel = targetLevel;
-                if (smooth && hasCurrent) {
-                    nextLevel = MoveLevelToward(currentLevel, targetLevel, kTransitionStepLevel);
-                }
-
-                LONG rc = SetSdrWhiteLevel(&api, path, nextLevel);
-                result.lastError = rc;
-                if (rc == ERROR_SUCCESS) {
-                    ++result.successCount;
-                    result.changed = true;
-                    result.appliedLevel = nextLevel;
-                }
-            }
-        }
-    }
-
-    result.ok = result.targetCount > 0 && result.successCount == result.targetCount;
-    if (!result.ok) {
-        UINT32 fallbackLevel = targetLevel;
-        result.complete = true;
-        if (smooth && g_lastKnownTargetLevel != 0) {
-            fallbackLevel = MoveLevelToward(g_lastKnownTargetLevel, targetLevel, kTransitionStepLevel);
-            result.complete = fallbackLevel == targetLevel;
-        }
-
-        int dwmSuccess = 0;
-        if (ApplyDwmFallback(fallbackLevel, &dwmSuccess)) {
-            result.ok = true;
-            result.usedDwmFallback = true;
-            result.successCount += dwmSuccess;
-            result.changed = true;
-            result.appliedLevel = fallbackLevel;
-        }
-    }
-
-    return result;
-}
-
-ApplyResult CheckSdrBrightness(int brightness) {
-    ApplyResult result;
-    UINT32 targetLevel = BrightnessPercentToSdrLevel(brightness);
-    result.complete = true;
-
-    DisplayConfigApi api = {};
-    if (!LoadDisplayConfigApi(&api)) return result;
-
-    std::vector<AppDisplayConfigPathInfo> paths;
-    if (!QueryActivePaths(&api, &paths)) return result;
-
-    for (size_t i = 0; i < paths.size(); ++i) {
-        const AppDisplayConfigPathInfo& path = paths[i];
-        if ((path.flags & kDisplayConfigPathActive) == 0 || !path.targetInfo.targetAvailable) continue;
-        if (!IsHdrEnabled(&api, path)) continue;
-
-        ++result.targetCount;
-        UINT32 currentLevel = 0;
-        if (GetSdrWhiteLevel(&api, path, &currentLevel)) {
-            if (currentLevel == targetLevel) {
-                ++result.successCount;
-            } else {
-                result.complete = false;
-            }
-        } else {
-            result.complete = false;
-        }
-    }
-
-    result.ok = result.targetCount > 0 && result.successCount == result.targetCount && result.complete;
-    return result;
 }
 
 std::wstring BuildStatusText(const NightDecision& decision, int brightness, const ApplyResult& result) {
@@ -2455,10 +916,7 @@ void UpdateTrayTip() {
     tip << T(TxtAutoRestoreShort) << L" "
         << (g_config.autoRestoreManualChanges ? T(TxtOn) : T(TxtOff));
 
-    g_tray.uFlags = NIF_TIP | NIF_SHOWTIP;
-    CopyString(g_tray.szTip, sizeof(g_tray.szTip) / sizeof(g_tray.szTip[0]), tip.str());
-    Shell_NotifyIconW(NIM_MODIFY, &g_tray);
-    g_tray.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
+    g_trayIcon.UpdateTip(tip.str());
 }
 
 void ShowTrayNotification(const std::wstring& title, const std::wstring& body,
@@ -2468,14 +926,7 @@ void ShowTrayNotification(const std::wstring& title, const std::wstring& body,
     g_lastNotificationBody = body;
     g_lastNotificationAction = action;
 
-    g_tray.uFlags = NIF_INFO;
-    CopyString(g_tray.szInfoTitle, sizeof(g_tray.szInfoTitle) / sizeof(g_tray.szInfoTitle[0]), title);
-    CopyString(g_tray.szInfo, sizeof(g_tray.szInfo) / sizeof(g_tray.szInfo[0]), body);
-    g_tray.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON;
-    g_tray.hBalloonIcon = g_notificationIcon ? g_notificationIcon : g_tray.hIcon;
-    g_tray.uTimeout = 5000;
-    Shell_NotifyIconW(NIM_MODIFY, &g_tray);
-    g_tray.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
+    g_trayIcon.ShowNotification(title, body);
 }
 
 void ShowLastNotificationDialog() {
@@ -2558,7 +1009,8 @@ void StopBrightnessTransition() {
 void ContinueBrightnessTransition() {
     if (!g_transitionActive) return;
 
-    ApplyResult result = ApplySdrLevelStep(g_transitionTargetLevel, true);
+    ApplyResult result = ApplySdrLevelStep(g_transitionTargetLevel, true, g_lastKnownTargetLevel,
+                                           kTransitionStepLevel);
     NightDecision decision;
     decision.night = g_transitionNight;
     decision.source = g_transitionSource;
@@ -2691,7 +1143,8 @@ void ApplySettingsBrightnessPreview(HWND hwnd, int id, int brightness) {
     StopBrightnessTransition();
 
     UINT32 targetLevel = BrightnessPercentToSdrLevel(brightness);
-    ApplyResult result = ApplySdrLevelStep(targetLevel, false);
+    ApplyResult result = ApplySdrLevelStep(targetLevel, false, g_lastKnownTargetLevel,
+                                           kTransitionStepLevel);
 
     g_settingsPreviewActive = true;
     g_settingsPreviewBrightness = brightness;
@@ -2837,135 +1290,20 @@ void RefreshStatusTextForCurrentLanguage() {
 }
 
 void AddTrayIcon(HWND hwnd) {
-    if (g_notificationIcon && g_notificationIcon != g_trayIcon) DestroyIcon(g_notificationIcon);
-    if (g_trayIcon) DestroyIcon(g_trayIcon);
-    g_trayIcon = NULL;
-    g_notificationIcon = NULL;
-
-    ZeroMemory(&g_tray, sizeof(g_tray));
-    g_tray.cbSize = sizeof(g_tray);
-    g_tray.hWnd = hwnd;
-    g_tray.uID = 1;
-    g_tray.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
-    g_tray.uCallbackMessage = kTrayMessage;
-
-    int smallW = GetSystemMetrics(SM_CXSMICON);
-    int smallH = GetSystemMetrics(SM_CYSMICON);
-    int largeW = GetSystemMetrics(SM_CXICON);
-    int largeH = GetSystemMetrics(SM_CYICON);
-    g_trayIcon = reinterpret_cast<HICON>(LoadImageW(g_instance, MAKEINTRESOURCEW(IDI_APPICON),
-                                                    IMAGE_ICON, smallW, smallH, LR_DEFAULTCOLOR));
-    g_notificationIcon = reinterpret_cast<HICON>(LoadImageW(g_instance, MAKEINTRESOURCEW(IDI_APPICON),
-                                                            IMAGE_ICON, largeW, largeH, LR_DEFAULTCOLOR));
-    if (!g_trayIcon) {
-        HICON fallback = LoadIconW(g_instance, MAKEINTRESOURCEW(IDI_APPICON));
-        if (!fallback) fallback = LoadIconW(NULL, IDI_APPLICATION);
-        g_trayIcon = fallback ? CopyIcon(fallback) : NULL;
-    }
-    if (!g_notificationIcon) {
-        HICON fallback = LoadIconW(g_instance, MAKEINTRESOURCEW(IDI_APPICON));
-        if (!fallback) fallback = LoadIconW(NULL, IDI_APPLICATION);
-        g_notificationIcon = fallback ? CopyIcon(fallback) : NULL;
-    }
-    g_tray.hIcon = g_trayIcon ? g_trayIcon : LoadIconW(NULL, IDI_APPLICATION);
-    CopyString(g_tray.szTip, sizeof(g_tray.szTip) / sizeof(g_tray.szTip[0]), T(TxtDisplayName));
-    Shell_NotifyIconW(NIM_ADD, &g_tray);
-    g_tray.uVersion = NOTIFYICON_VERSION_4;
-    Shell_NotifyIconW(NIM_SETVERSION, &g_tray);
+    g_trayIcon.Add(g_instance, hwnd, kTrayMessage, IDI_APPICON, T(TxtDisplayName));
 }
 
 void RemoveTrayIcon() {
-    Shell_NotifyIconW(NIM_DELETE, &g_tray);
-    if (g_notificationIcon && g_notificationIcon != g_trayIcon) DestroyIcon(g_notificationIcon);
-    if (g_trayIcon) DestroyIcon(g_trayIcon);
-    g_notificationIcon = NULL;
-    g_trayIcon = NULL;
+    g_trayIcon.Remove();
 }
 
 void AppendMenuText(HMENU menu, UINT flags, UINT_PTR id, const std::wstring& text) {
     AppendMenuW(menu, flags, id, text.c_str());
 }
 
-COLORREF Rgb(BYTE r, BYTE g, BYTE b) {
-    return RGB(r, g, b);
-}
-
-bool ShouldUseDarkAppTheme() {
-    DWORD lightTheme = 1;
-    ReadDwordValue(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                   L"AppsUseLightTheme", &lightTheme);
-    return lightTheme == 0;
-}
-
-void ApplySystemMenuTheme(bool dark) {
-    HMODULE uxtheme = LoadLibraryW(L"uxtheme.dll");
-    if (!uxtheme) return;
-
-    typedef int(WINAPI* SetPreferredAppModeFn)(int);
-    typedef void(WINAPI* FlushMenuThemesFn)();
-    SetPreferredAppModeFn setPreferredAppMode =
-        reinterpret_cast<SetPreferredAppModeFn>(GetProcAddress(uxtheme, MAKEINTRESOURCEA(135)));
-    FlushMenuThemesFn flushMenuThemes =
-        reinterpret_cast<FlushMenuThemesFn>(GetProcAddress(uxtheme, MAKEINTRESOURCEA(136)));
-
-    if (setPreferredAppMode) {
-        setPreferredAppMode(dark ? 2 : 3);  // AllowDark / ForceLight.
-    }
-    if (flushMenuThemes) {
-        flushMenuThemes();
-    }
-
-    FreeLibrary(uxtheme);
-}
-
-UiTheme BuildUiTheme() {
-    UiTheme theme = {};
-    theme.dark = ShouldUseDarkAppTheme();
-    theme.primary = Rgb(0, 103, 192);
-    theme.primaryHover = Rgb(0, 113, 212);
-    theme.primaryBorderHover = Rgb(64, 178, 255);
-
-    if (theme.dark) {
-        theme.window = Rgb(15, 17, 18);
-        theme.card = Rgb(31, 35, 36);
-        theme.cardBorder = Rgb(31, 35, 36);
-        theme.cardHover = Rgb(38, 42, 44);
-        theme.elevated = Rgb(40, 45, 48);
-        theme.control = Rgb(40, 45, 48);
-        theme.controlHover = Rgb(49, 54, 57);
-        theme.controlBorder = Rgb(40, 45, 48);
-        theme.controlBorderHover = Rgb(62, 68, 71);
-        theme.text = Rgb(241, 241, 241);
-        theme.mutedText = Rgb(199, 202, 204);
-        theme.titleText = Rgb(255, 255, 255);
-        theme.track = Rgb(78, 84, 87);
-        theme.trackHover = Rgb(94, 101, 105);
-        theme.knob = Rgb(255, 255, 255);
-        theme.disabledText = Rgb(142, 147, 150);
-    } else {
-        theme.window = Rgb(243, 243, 243);
-        theme.card = Rgb(255, 255, 255);
-        theme.cardBorder = Rgb(229, 229, 229);
-        theme.cardHover = Rgb(247, 247, 247);
-        theme.elevated = Rgb(249, 249, 249);
-        theme.control = Rgb(251, 251, 251);
-        theme.controlHover = Rgb(245, 245, 245);
-        theme.controlBorder = Rgb(218, 218, 218);
-        theme.controlBorderHover = Rgb(176, 176, 176);
-        theme.text = Rgb(32, 32, 32);
-        theme.mutedText = Rgb(96, 96, 96);
-        theme.titleText = Rgb(24, 24, 24);
-        theme.track = Rgb(210, 210, 210);
-        theme.trackHover = Rgb(198, 198, 198);
-        theme.knob = Rgb(255, 255, 255);
-        theme.disabledText = Rgb(146, 146, 146);
-    }
-    return theme;
-}
-
 void ReloadUiTheme() {
-    g_theme = BuildUiTheme();
-    ApplySystemMenuTheme(g_theme.dark);
+    g_theme = ui_theme::BuildTheme();
+    ui_theme::ApplySystemMenuTheme(g_theme.dark);
     if (g_windowBrush) {
         DeleteObject(g_windowBrush);
         g_windowBrush = NULL;
@@ -2980,115 +1318,32 @@ void ReloadUiTheme() {
     }
 }
 
-void ApplyUiDpi(int dpiX, int dpiY) {
-    if (dpiX <= 0) dpiX = 96;
-    if (dpiY <= 0) dpiY = dpiX;
-    if (dpiX != g_uiDpiX || dpiY != g_uiDpiY) {
-        g_uiDpiX = dpiX;
-        g_uiDpiY = dpiY;
+void RefreshUiDpi(HWND hwnd) {
+    if (ui_dpi::RefreshForWindow(hwnd)) {
         CleanupFontResources();
     }
 }
 
-void RefreshUiDpi(HWND hwnd) {
-    int dpiX = 96;
-    int dpiY = 96;
-
-    typedef UINT(WINAPI* GetDpiForWindowFn)(HWND);
-    HMODULE user32 = GetModuleHandleW(L"user32.dll");
-    GetDpiForWindowFn getDpiForWindow =
-        user32 ? reinterpret_cast<GetDpiForWindowFn>(GetProcAddress(user32, "GetDpiForWindow")) : NULL;
-    if (hwnd && getDpiForWindow) {
-        UINT dpi = getDpiForWindow(hwnd);
-        if (dpi != 0) {
-            dpiX = static_cast<int>(dpi);
-            dpiY = static_cast<int>(dpi);
-        }
-    } else {
-        HDC dc = GetDC(hwnd);
-        if (dc) {
-            dpiX = GetDeviceCaps(dc, LOGPIXELSX);
-            dpiY = GetDeviceCaps(dc, LOGPIXELSY);
-            ReleaseDC(hwnd, dc);
-        }
-    }
-
-    ApplyUiDpi(dpiX, dpiY);
-}
-
 void RefreshUiDpiForNewTopLevelWindow(HWND owner) {
-    int dpiX = 96;
-    int dpiY = 96;
-    bool found = false;
-
-    HMODULE shcore = LoadLibraryW(L"shcore.dll");
-    if (shcore) {
-        typedef HRESULT(WINAPI* GetDpiForMonitorFn)(HMONITOR, int, UINT*, UINT*);
-        GetDpiForMonitorFn getDpiForMonitor =
-            reinterpret_cast<GetDpiForMonitorFn>(GetProcAddress(shcore, "GetDpiForMonitor"));
-        if (getDpiForMonitor) {
-            HMONITOR monitor = owner ? MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST) : NULL;
-            if (!monitor) {
-                POINT pt = {};
-                GetCursorPos(&pt);
-                monitor = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
-            }
-
-            UINT monitorDpiX = 0;
-            UINT monitorDpiY = 0;
-            if (monitor && SUCCEEDED(getDpiForMonitor(monitor, 0, &monitorDpiX, &monitorDpiY)) &&
-                monitorDpiX != 0) {
-                dpiX = static_cast<int>(monitorDpiX);
-                dpiY = static_cast<int>(monitorDpiY ? monitorDpiY : monitorDpiX);
-                found = true;
-            }
-        }
-        FreeLibrary(shcore);
+    if (ui_dpi::RefreshForNewTopLevelWindow(owner)) {
+        CleanupFontResources();
     }
-
-    if (!found) {
-        HMODULE user32 = GetModuleHandleW(L"user32.dll");
-        typedef UINT(WINAPI* GetDpiForSystemFn)();
-        GetDpiForSystemFn getDpiForSystem =
-            user32 ? reinterpret_cast<GetDpiForSystemFn>(GetProcAddress(user32, "GetDpiForSystem")) : NULL;
-        if (getDpiForSystem) {
-            UINT dpi = getDpiForSystem();
-            if (dpi != 0) {
-                dpiX = static_cast<int>(dpi);
-                dpiY = static_cast<int>(dpi);
-                found = true;
-            }
-        }
-    }
-
-    if (!found) {
-        HDC dc = GetDC(NULL);
-        if (dc) {
-            dpiX = GetDeviceCaps(dc, LOGPIXELSX);
-            dpiY = GetDeviceCaps(dc, LOGPIXELSY);
-            ReleaseDC(NULL, dc);
-        }
-    }
-
-    ApplyUiDpi(dpiX, dpiY);
 }
 
 int Ui(int value) {
-    return MulDiv(value, g_uiDpiX, 96);
+    return ui_dpi::Scale(value);
 }
 
 int FromUi(int value) {
-    return MulDiv(value, 96, g_uiDpiX);
+    return ui_dpi::Unscale(value);
 }
 
 RECT UiBox(int x, int y, int width, int height) {
-    RECT rect = {Ui(x), Ui(y), Ui(x + width), Ui(y + height)};
-    return rect;
+    return ui_dpi::Box(x, y, width, height);
 }
 
 bool PtInUiBox(POINT pt, int x, int y, int width, int height) {
-    RECT rect = UiBox(x, y, width, height);
-    return PtInRect(&rect, pt) != FALSE;
+    return ui_dpi::PtInBox(pt, x, y, width, height);
 }
 
 POINT SettingsViewportPoint(POINT pt) {
@@ -3302,20 +1557,8 @@ int SliderValueFromPoint(POINT pt, int x, int width) {
     return ClampInt(MulDiv(pt.x - left, 100, w), 0, 100);
 }
 
-std::wstring TimeText(int hour, int minute) {
-    std::wstringstream ss;
-    ss << FormatTwoDigit(hour) << L":" << FormatTwoDigit(minute);
-    return ss.str();
-}
-
-void AddMinutesToTime(int* hour, int* minute, int delta) {
-    int total = ((*hour * 60 + *minute + delta) % (24 * 60) + (24 * 60)) % (24 * 60);
-    *hour = total / 60;
-    *minute = total % 60;
-}
-
 HFONT CreateUiFont(int pointSize, int weight) {
-    int height = -MulDiv(pointSize, g_uiDpiY, 72);
+    int height = ui_dpi::FontHeightForPointSize(pointSize);
     const wchar_t* primaryFace = L"Segoe UI Variable Text";
     switch (CurrentUiLanguage()) {
     case LangChinese:
@@ -3349,22 +1592,17 @@ HFONT CreateUiFont(int pointSize, int weight) {
 }
 
 bool EnsureGdiplus() {
-    if (g_gdiplusToken) return true;
-
-    Gdiplus::GdiplusStartupInput gdiplusInput;
-    return Gdiplus::GdiplusStartup(&g_gdiplusToken, &gdiplusInput, NULL) == Gdiplus::Ok;
+    return ui_gdiplus::EnsureStarted();
 }
 
 void ShutdownGdiplus() {
-    if (!g_gdiplusToken) return;
-    Gdiplus::GdiplusShutdown(g_gdiplusToken);
-    g_gdiplusToken = 0;
+    ui_gdiplus::Shutdown();
 }
 
 void EnsureUiResources() {
     EnsureGdiplus();
     if (g_theme.window == 0 && g_theme.card == 0) {
-        g_theme = BuildUiTheme();
+        g_theme = ui_theme::BuildTheme();
     }
     if (!g_uiFont) g_uiFont = CreateUiFont(10, FW_NORMAL);
     if (!g_smallFont) g_smallFont = CreateUiFont(9, FW_NORMAL);
@@ -3400,45 +1638,12 @@ void CleanupUiResources() {
 }
 
 void ApplyModernWindowFrame(HWND hwnd) {
-    HMODULE dwmapi = LoadLibraryW(L"dwmapi.dll");
-    if (!dwmapi) return;
-
-    typedef HRESULT(WINAPI* DwmSetWindowAttributeFn)(HWND, DWORD, LPCVOID, DWORD);
-    DwmSetWindowAttributeFn setAttribute =
-        reinterpret_cast<DwmSetWindowAttributeFn>(GetProcAddress(dwmapi, "DwmSetWindowAttribute"));
-    if (setAttribute) {
-        BOOL darkFrame = g_theme.dark ? TRUE : FALSE;
-        setAttribute(hwnd, 20, &darkFrame, sizeof(darkFrame));  // DWMWA_USE_IMMERSIVE_DARK_MODE on recent builds.
-        setAttribute(hwnd, 19, &darkFrame, sizeof(darkFrame));  // Older dark mode attribute.
-
-        DWORD corner = 2;  // DWMWCP_ROUND.
-        setAttribute(hwnd, 33, &corner, sizeof(corner));
-
-        DWORD backdrop = 2;  // DWMSBT_MAINWINDOW (Mica) on Windows 11 22H2+.
-        setAttribute(hwnd, 38, &backdrop, sizeof(backdrop));
-
-        COLORREF caption = g_theme.window;
-        COLORREF text = g_theme.titleText;
-        setAttribute(hwnd, 35, &caption, sizeof(caption));  // DWMWA_CAPTION_COLOR on Windows 11.
-        setAttribute(hwnd, 36, &text, sizeof(text));        // DWMWA_TEXT_COLOR on Windows 11.
-    }
-
-    FreeLibrary(dwmapi);
+    ui_window::ApplyModernFrame(hwnd, g_theme.dark, g_theme.window, g_theme.titleText);
 }
 
 void AddRoundedRectPath(Gdiplus::GraphicsPath* path, Gdiplus::REAL x, Gdiplus::REAL y,
                         Gdiplus::REAL w, Gdiplus::REAL h, Gdiplus::REAL radius) {
-    radius = std::max<Gdiplus::REAL>(0.0f, std::min<Gdiplus::REAL>(radius, std::min(w, h) / 2.0f));
-    Gdiplus::REAL d = radius * 2.0f;
-    if (radius <= 0.0f) {
-        path->AddRectangle(Gdiplus::RectF(x, y, w, h));
-        return;
-    }
-    path->AddArc(x, y, d, d, 180.0f, 90.0f);
-    path->AddArc(x + w - d, y, d, d, 270.0f, 90.0f);
-    path->AddArc(x + w - d, y + h - d, d, d, 0.0f, 90.0f);
-    path->AddArc(x, y + h - d, d, d, 90.0f, 90.0f);
-    path->CloseFigure();
+    ui_window::AddRoundedRectPath(path, x, y, w, h, radius);
 }
 
 void ShowTrayMenu(HWND hwnd) {
@@ -3786,30 +1991,7 @@ void BrightnessPreviewLayout(const SettingsLayout& layout, int* leftX, int* topY
 }
 
 std::wstring HotkeyText(UINT mod, UINT vk) {
-    if (vk == 0) return T(TxtHotkeyNone);
-    std::wstring result;
-    if (mod & MOD_CONTROL) result += L"Ctrl + ";
-    if (mod & MOD_SHIFT) result += L"Shift + ";
-    if (mod & MOD_ALT) result += L"Alt + ";
-    if (mod & MOD_WIN) result += L"Win + ";
-    if (vk >= 'A' && vk <= 'Z') {
-        result += static_cast<wchar_t>(vk);
-    } else if (vk >= VK_F1 && vk <= VK_F12) {
-        wchar_t fnum[8] = {};
-        _snwprintf(fnum, 8, L"F%u", vk - VK_F1 + 1);
-        result += fnum;
-    } else {
-        UINT scanCode = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
-        wchar_t keyName[64] = {};
-        if (GetKeyNameTextW(static_cast<LONG>(scanCode) << 16, keyName, 64) > 0) {
-            result += keyName;
-        } else {
-            wchar_t hex[16] = {};
-            _snwprintf(hex, 16, L"0x%02X", vk);
-            result += hex;
-        }
-    }
-    return result;
+    return app_hotkeys::Format(mod, vk, T(TxtHotkeyNone));
 }
 
 int LanguageDropdownOptionFromPoint(POINT pt, const SettingsLayout& layout) {
@@ -4936,407 +3118,10 @@ void DrawSdrHdrComparison(HDC dc, const SettingsLayout& layout) {
     DrawSdrHdrComparisonAt(dc, leftX, topY, imageW, imageH, gap);
 }
 
-template <typename Fn>
-Fn ComMethod(void* object, size_t index) {
-    return reinterpret_cast<Fn>((*reinterpret_cast<void***>(object))[index]);
-}
-
-ULONG ReleaseCom(void* object) {
-    if (!object) return 0;
-    typedef ULONG(STDMETHODCALLTYPE* ReleaseFn)(void*);
-    return ComMethod<ReleaseFn>(object, 2)(object);
-}
-
-HRESULT QueryCom(void* object, REFIID iid, void** result) {
-    if (!object || !result) return E_POINTER;
-    *result = NULL;
-    typedef HRESULT(STDMETHODCALLTYPE* QueryInterfaceFn)(void*, REFIID, void**);
-    return ComMethod<QueryInterfaceFn>(object, 0)(object, iid, result);
-}
-
-void ReleaseHdrPreviewRenderTarget() {
-    if (g_hdrPreview.renderTarget) {
-        ReleaseCom(g_hdrPreview.renderTarget);
-        g_hdrPreview.renderTarget = NULL;
-    }
-}
-
-void ReleaseHdrPreviewDevice() {
-    ReleaseHdrPreviewRenderTarget();
-    if (g_hdrPreview.pixelShader) ReleaseCom(g_hdrPreview.pixelShader);
-    if (g_hdrPreview.vertexShader) ReleaseCom(g_hdrPreview.vertexShader);
-    if (g_hdrPreview.swapChain3) ReleaseCom(g_hdrPreview.swapChain3);
-    if (g_hdrPreview.swapChain) ReleaseCom(g_hdrPreview.swapChain);
-    if (g_hdrPreview.context) ReleaseCom(g_hdrPreview.context);
-    if (g_hdrPreview.device) ReleaseCom(g_hdrPreview.device);
-    if (g_hdrPreview.d3dCompiler) FreeLibrary(g_hdrPreview.d3dCompiler);
-    if (g_hdrPreview.d3d11) FreeLibrary(g_hdrPreview.d3d11);
-
-    HWND hwnd = g_hdrPreview.hwnd;
-    bool failed = g_hdrPreview.failed;
-    g_hdrPreview = HdrPreviewRenderer();
-    g_hdrPreview.hwnd = hwnd;
-    g_hdrPreview.failed = failed;
-}
-
-void ResetHdrPreviewDevice() {
-    HWND hwnd = g_hdrPreview.hwnd;
-    ReleaseHdrPreviewDevice();
-    g_hdrPreview.hwnd = hwnd;
-    g_hdrPreview.failed = false;
-}
-
-void* BlobBufferPointer(void* blob) {
-    typedef LPVOID(STDMETHODCALLTYPE* GetBufferPointerFn)(void*);
-    return blob ? ComMethod<GetBufferPointerFn>(blob, 3)(blob) : NULL;
-}
-
-SIZE_T BlobBufferSize(void* blob) {
-    typedef SIZE_T(STDMETHODCALLTYPE* GetBufferSizeFn)(void*);
-    return blob ? ComMethod<GetBufferSizeFn>(blob, 4)(blob) : 0;
-}
-
-const char kHdrPreviewVertexShader[] =
-    "struct VSOut { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };"
-    "VSOut main(uint id : SV_VertexID) {"
-    "    float2 uv = float2((id << 1) & 2, id & 2);"
-    "    VSOut o;"
-    "    o.pos = float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);"
-    "    o.uv = uv;"
-    "    return o;"
-    "}";
-
-double SrgbByteToLinear(BYTE value) {
-    double c = static_cast<double>(value) / 255.0;
-    return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
-}
-
-std::string BuildHdrPreviewPixelShaderSource() {
-    COLORREF bg = g_theme.card;
-    std::ostringstream ss;
-    ss.setf(std::ios::fixed);
-    ss.precision(6);
-    ss
-        << "struct VSOut { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };"
-        << "float aaStep(float edge, float value) {"
-        << "    float w = max(fwidth(value) * 1.35, 0.0015);"
-        << "    return smoothstep(edge - w, edge + w, value);"
-        << "}"
-        << "float stripe(float y, float center, float width) {"
-        << "    float w = max(fwidth(y) * 1.4, 0.0015);"
-        << "    return 1.0 - smoothstep(width - w, width + w, abs(y - center));"
-        << "}"
-        << "float roundedMask(float2 uv) {"
-        << "    const float aspect = 246.0 / 74.0;"
-        << "    const float radius = 8.0 / 74.0;"
-        << "    float2 p = float2((uv.x - 0.5) * aspect, uv.y - 0.5);"
-        << "    float2 b = float2(0.5 * aspect, 0.5) - radius;"
-        << "    float2 q = abs(p) - b;"
-        << "    float dist = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;"
-        << "    float w = max(fwidth(dist) * 1.35, 0.0020);"
-        << "    return 1.0 - smoothstep(-w, w, dist);"
-        << "}"
-        << "float4 main(VSOut input) : SV_Target {"
-        << "    const float aspect = 246.0 / 74.0;"
-        << "    float2 uv = saturate(input.uv);"
-        << "    float3 topSky = float3(0.055, 0.42, 1.35);"
-        << "    float3 bottomSky = float3(0.48, 1.08, 1.75);"
-        << "    float3 color = lerp(topSky, bottomSky, uv.y);"
-        << "    float2 sunPos = float2(0.80, 0.27);"
-        << "    float2 sunDelta = float2((uv.x - sunPos.x) * aspect, uv.y - sunPos.y);"
-        << "    float sunDist = length(sunDelta);"
-        << "    float glow = saturate(1.0 - sunDist / 0.36);"
-        << "    color += glow * glow * float3(1.8, 1.55, 0.55);"
-        << "    float sunDisk = 1.0 - smoothstep(0.125, 0.145, sunDist);"
-        << "    color = lerp(color, float3(7.2, 6.1, 2.4), sunDisk);"
-        << "    float rearPeak = 0.78 - abs(uv.x - 0.26) * 1.25;"
-        << "    float rear = aaStep(rearPeak, uv.y) * aaStep(0.43, uv.y);"
-        << "    color = lerp(color, float3(0.055, 0.25, 0.32), rear * 0.92);"
-        << "    float frontPeak = 0.88 - abs(uv.x - 0.50) * 1.55;"
-        << "    float front = aaStep(frontPeak, uv.y) * aaStep(0.50, uv.y);"
-        << "    color = lerp(color, float3(0.045, 0.48, 0.30), front * 0.96);"
-        << "    float water = aaStep(0.67, uv.y);"
-        << "    float3 waterTop = float3(0.05, 0.95, 1.20);"
-        << "    float3 waterBottom = float3(0.03, 0.35, 1.15);"
-        << "    float3 waterColor = lerp(waterTop, waterBottom, saturate((uv.y - 0.67) / 0.33));"
-        << "    color = lerp(color, waterColor, water);"
-        << "    float line1 = stripe(uv.y, 0.76, 0.012) * smoothstep(0.42, 0.58, uv.x) * (1.0 - smoothstep(0.94, 1.0, uv.x));"
-        << "    float line2 = stripe(uv.y, 0.88, 0.010) * smoothstep(0.58, 0.72, uv.x) * (1.0 - smoothstep(0.94, 1.0, uv.x));"
-        << "    color = lerp(color, float3(3.8, 4.2, 3.3), saturate(line1 + line2));"
-        << "    float3 bg = float3("
-        << SrgbByteToLinear(GetRValue(bg)) << ","
-        << SrgbByteToLinear(GetGValue(bg)) << ","
-        << SrgbByteToLinear(GetBValue(bg)) << ");"
-        << "    color = lerp(bg, max(color, 0.0), roundedMask(uv));"
-        << "    return float4(color, 1.0);"
-        << "}";
-    return ss.str();
-}
-
-bool CompileHdrPreviewShader(const char* source, const char* entry, const char* target, void** blob) {
-    *blob = NULL;
-    if (!g_hdrPreview.d3dCompiler) {
-        g_hdrPreview.d3dCompiler = LoadLibraryW(L"d3dcompiler_47.dll");
-        if (!g_hdrPreview.d3dCompiler) g_hdrPreview.d3dCompiler = LoadLibraryW(L"d3dcompiler_43.dll");
-    }
-    if (!g_hdrPreview.d3dCompiler) return false;
-
-    D3DCompileFn compile = reinterpret_cast<D3DCompileFn>(GetProcAddress(g_hdrPreview.d3dCompiler, "D3DCompile"));
-    if (!compile) {
-        FreeLibrary(g_hdrPreview.d3dCompiler);
-        g_hdrPreview.d3dCompiler = NULL;
-        return false;
-    }
-
-    void* errors = NULL;
-    HRESULT hr = compile(source, std::strlen(source), NULL, NULL, NULL, entry, target,
-                         kD3dCompileEnableStrictness | kD3dCompileOptimizationLevel3, 0, blob, &errors);
-    if (errors) ReleaseCom(errors);
-    return SUCCEEDED(hr) && *blob;
-}
-
-bool CreateHdrPreviewShaders() {
-    void* vsBlob = NULL;
-    void* psBlob = NULL;
-    if (!CompileHdrPreviewShader(kHdrPreviewVertexShader, "main", "vs_4_0", &vsBlob)) {
-        return false;
-    }
-    std::string pixelShader = BuildHdrPreviewPixelShaderSource();
-    if (!CompileHdrPreviewShader(pixelShader.c_str(), "main", "ps_4_0", &psBlob)) {
-        ReleaseCom(vsBlob);
-        return false;
-    }
-
-    typedef HRESULT(STDMETHODCALLTYPE* CreateShaderFn)(void*, const void*, SIZE_T, void*, void**);
-    HRESULT hr = ComMethod<CreateShaderFn>(g_hdrPreview.device, 12)(
-        g_hdrPreview.device, BlobBufferPointer(vsBlob), BlobBufferSize(vsBlob), NULL, &g_hdrPreview.vertexShader);
-    if (SUCCEEDED(hr)) {
-        hr = ComMethod<CreateShaderFn>(g_hdrPreview.device, 15)(
-            g_hdrPreview.device, BlobBufferPointer(psBlob), BlobBufferSize(psBlob), NULL, &g_hdrPreview.pixelShader);
-    }
-
-    ReleaseCom(vsBlob);
-    ReleaseCom(psBlob);
-    return SUCCEEDED(hr) && g_hdrPreview.vertexShader && g_hdrPreview.pixelShader;
-}
-
-bool EnsureHdrPreviewCore() {
-    if (g_hdrPreview.device && g_hdrPreview.context && g_hdrPreview.vertexShader && g_hdrPreview.pixelShader) {
-        return true;
-    }
-    if (g_hdrPreview.failed) return false;
-
-    g_hdrPreview.d3d11 = LoadLibraryW(L"d3d11.dll");
-    if (!g_hdrPreview.d3d11) {
-        g_hdrPreview.failed = true;
-        return false;
-    }
-
-    D3D11CreateDeviceFn createDevice =
-        reinterpret_cast<D3D11CreateDeviceFn>(GetProcAddress(g_hdrPreview.d3d11, "D3D11CreateDevice"));
-    if (!createDevice) {
-        g_hdrPreview.failed = true;
-        ReleaseHdrPreviewDevice();
-        return false;
-    }
-
-    D3dFeatureLevel levels[] = {
-        kD3dFeatureLevel11_1,
-        kD3dFeatureLevel11_0,
-        kD3dFeatureLevel10_1,
-        kD3dFeatureLevel10_0
-    };
-    D3dFeatureLevel createdLevel = 0;
-    UINT flags = kD3d11CreateDeviceBgraSupport;
-    HRESULT hr = createDevice(NULL, kD3dDriverTypeHardware, NULL, flags, levels,
-                              sizeof(levels) / sizeof(levels[0]), kD3d11SdkVersion,
-                              &g_hdrPreview.device, &createdLevel, &g_hdrPreview.context);
-    if (hr == E_INVALIDARG) {
-        hr = createDevice(NULL, kD3dDriverTypeHardware, NULL, flags, levels + 1,
-                          sizeof(levels) / sizeof(levels[0]) - 1, kD3d11SdkVersion,
-                          &g_hdrPreview.device, &createdLevel, &g_hdrPreview.context);
-    }
-    if (FAILED(hr)) {
-        hr = createDevice(NULL, kD3dDriverTypeWarp, NULL, flags, levels + 1,
-                          sizeof(levels) / sizeof(levels[0]) - 1, kD3d11SdkVersion,
-                          &g_hdrPreview.device, &createdLevel, &g_hdrPreview.context);
-    }
-    if (FAILED(hr) || !g_hdrPreview.device || !g_hdrPreview.context || !CreateHdrPreviewShaders()) {
-        g_hdrPreview.failed = true;
-        ReleaseHdrPreviewDevice();
-        return false;
-    }
-
-    return true;
-}
-
-bool CreateHdrPreviewRenderTarget() {
-    if (!g_hdrPreview.swapChain || g_hdrPreview.renderTarget) return g_hdrPreview.renderTarget != NULL;
-
-    void* backBuffer = NULL;
-    typedef HRESULT(STDMETHODCALLTYPE* GetBufferFn)(void*, UINT, REFIID, void**);
-    HRESULT hr = ComMethod<GetBufferFn>(g_hdrPreview.swapChain, 9)(
-        g_hdrPreview.swapChain, 0, kIidD3d11Texture2D, &backBuffer);
-    if (FAILED(hr) || !backBuffer) return false;
-
-    typedef HRESULT(STDMETHODCALLTYPE* CreateRenderTargetViewFn)(void*, void*, const void*, void**);
-    hr = ComMethod<CreateRenderTargetViewFn>(g_hdrPreview.device, 9)(
-        g_hdrPreview.device, backBuffer, NULL, &g_hdrPreview.renderTarget);
-    ReleaseCom(backBuffer);
-    return SUCCEEDED(hr) && g_hdrPreview.renderTarget;
-}
-
-bool UpdateHdrPreviewColorSpace() {
-    g_hdrPreview.realHdrColorSpace = false;
-    if (!g_hdrPreview.swapChain) return false;
-
-    if (!g_hdrPreview.swapChain3) {
-        QueryCom(g_hdrPreview.swapChain, kIidIdxgiSwapChain3, &g_hdrPreview.swapChain3);
-    }
-    if (!g_hdrPreview.swapChain3) return false;
-
-    typedef HRESULT(STDMETHODCALLTYPE* CheckColorSpaceSupportFn)(void*, UINT, UINT*);
-    typedef HRESULT(STDMETHODCALLTYPE* SetColorSpaceFn)(void*, UINT);
-    UINT support = 0;
-    HRESULT hr = ComMethod<CheckColorSpaceSupportFn>(g_hdrPreview.swapChain3, 37)(
-        g_hdrPreview.swapChain3, kDxgiColorSpaceRgbFullG10NoneP709, &support);
-    if (FAILED(hr) || (support & kDxgiSwapChainColorSpaceSupportPresent) == 0) {
-        return false;
-    }
-
-    hr = ComMethod<SetColorSpaceFn>(g_hdrPreview.swapChain3, 38)(
-        g_hdrPreview.swapChain3, kDxgiColorSpaceRgbFullG10NoneP709);
-    g_hdrPreview.realHdrColorSpace = SUCCEEDED(hr);
-    return g_hdrPreview.realHdrColorSpace;
-}
-
-bool CreateHdrPreviewSwapChain(HWND hwnd, int width, int height) {
-    if (g_hdrPreview.swapChain) return true;
-
-    void* dxgiDevice = NULL;
-    void* adapter = NULL;
-    void* factory = NULL;
-    HRESULT hr = QueryCom(g_hdrPreview.device, kIidIdxgiDevice, &dxgiDevice);
-    if (FAILED(hr) || !dxgiDevice) return false;
-
-    typedef HRESULT(STDMETHODCALLTYPE* GetAdapterFn)(void*, void**);
-    hr = ComMethod<GetAdapterFn>(dxgiDevice, 7)(dxgiDevice, &adapter);
-    if (SUCCEEDED(hr) && adapter) {
-        typedef HRESULT(STDMETHODCALLTYPE* GetParentFn)(void*, REFIID, void**);
-        hr = ComMethod<GetParentFn>(adapter, 6)(adapter, kIidIdxgiFactory2, &factory);
-    }
-    if (FAILED(hr) || !factory) {
-        if (adapter) ReleaseCom(adapter);
-        ReleaseCom(dxgiDevice);
-        return false;
-    }
-
-    typedef HRESULT(STDMETHODCALLTYPE* MakeWindowAssociationFn)(void*, HWND, UINT);
-    ComMethod<MakeWindowAssociationFn>(factory, 8)(factory, hwnd, kDxgiMwaNoAltEnter);
-
-    DxgiSwapChainDesc1 desc = {};
-    desc.Width = static_cast<UINT>(std::max(1, width));
-    desc.Height = static_cast<UINT>(std::max(1, height));
-    desc.Format = kDxgiFormatR16G16B16A16Float;
-    desc.Stereo = FALSE;
-    desc.SampleDesc.Count = 1;
-    desc.SampleDesc.Quality = 0;
-    desc.BufferUsage = kDxgiUsageRenderTargetOutput;
-    desc.BufferCount = 2;
-    desc.Scaling = kDxgiScalingStretch;
-    desc.SwapEffect = kDxgiSwapEffectFlipDiscard;
-    desc.AlphaMode = kDxgiAlphaModeIgnore;
-    desc.Flags = 0;
-
-    typedef HRESULT(STDMETHODCALLTYPE* CreateSwapChainForHwndFn)(void*, void*, HWND, const DxgiSwapChainDesc1*,
-                                                                const void*, void*, void**);
-    hr = ComMethod<CreateSwapChainForHwndFn>(factory, 15)(
-        factory, g_hdrPreview.device, hwnd, &desc, NULL, NULL, &g_hdrPreview.swapChain);
-
-    ReleaseCom(factory);
-    ReleaseCom(adapter);
-    ReleaseCom(dxgiDevice);
-
-    if (FAILED(hr) || !g_hdrPreview.swapChain) return false;
-
-    g_hdrPreview.width = width;
-    g_hdrPreview.height = height;
-    UpdateHdrPreviewColorSpace();
-    return CreateHdrPreviewRenderTarget();
-}
-
-bool ResizeHdrPreviewSwapChain(int width, int height) {
-    if (!g_hdrPreview.swapChain) return false;
-    if (width == g_hdrPreview.width && height == g_hdrPreview.height && g_hdrPreview.renderTarget) {
-        UpdateHdrPreviewColorSpace();
-        return true;
-    }
-
-    ReleaseHdrPreviewRenderTarget();
-    typedef HRESULT(STDMETHODCALLTYPE* ResizeBuffersFn)(void*, UINT, UINT, UINT, UINT, UINT);
-    HRESULT hr = ComMethod<ResizeBuffersFn>(g_hdrPreview.swapChain, 13)(
-        g_hdrPreview.swapChain, 0, static_cast<UINT>(std::max(1, width)),
-        static_cast<UINT>(std::max(1, height)), kDxgiFormatUnknown, 0);
-    if (FAILED(hr)) return false;
-
-    g_hdrPreview.width = width;
-    g_hdrPreview.height = height;
-    UpdateHdrPreviewColorSpace();
-    return CreateHdrPreviewRenderTarget();
-}
-
-bool EnsureHdrPreviewReady(HWND hwnd, int width, int height) {
-    if (width <= 0 || height <= 0) return false;
-    if (!EnsureHdrPreviewCore()) return false;
-    if (!CreateHdrPreviewSwapChain(hwnd, width, height)) {
-        g_hdrPreview.failed = true;
-        return false;
-    }
-    if (!ResizeHdrPreviewSwapChain(width, height)) return false;
-    return g_hdrPreview.realHdrColorSpace && g_hdrPreview.renderTarget != NULL;
-}
-
 void ApplyHdrPreviewRegion(HWND hwnd, int width, int height) {
     (void)width;
     (void)height;
     SetWindowRgn(hwnd, NULL, FALSE);
-}
-
-bool RenderHdrPreview() {
-    if (!g_hdrPreview.realHdrColorSpace || !g_hdrPreview.context || !g_hdrPreview.renderTarget ||
-        !g_hdrPreview.vertexShader || !g_hdrPreview.pixelShader || !g_hdrPreview.swapChain) {
-        return false;
-    }
-
-    float clear[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-    typedef void(STDMETHODCALLTYPE* ClearRenderTargetViewFn)(void*, void*, const float[4]);
-    typedef void(STDMETHODCALLTYPE* SetRenderTargetsFn)(void*, UINT, void* const*, void*);
-    typedef void(STDMETHODCALLTYPE* SetViewportsFn)(void*, UINT, const D3d11Viewport*);
-    typedef void(STDMETHODCALLTYPE* SetPrimitiveTopologyFn)(void*, UINT);
-    typedef void(STDMETHODCALLTYPE* SetShaderFn)(void*, void*, void* const*, UINT);
-    typedef void(STDMETHODCALLTYPE* DrawFn)(void*, UINT, UINT);
-    typedef HRESULT(STDMETHODCALLTYPE* PresentFn)(void*, UINT, UINT);
-
-    ComMethod<ClearRenderTargetViewFn>(g_hdrPreview.context, 50)(g_hdrPreview.context, g_hdrPreview.renderTarget, clear);
-
-    void* targets[1] = {g_hdrPreview.renderTarget};
-    ComMethod<SetRenderTargetsFn>(g_hdrPreview.context, 33)(g_hdrPreview.context, 1, targets, NULL);
-
-    D3d11Viewport viewport = {};
-    viewport.TopLeftX = 0.0f;
-    viewport.TopLeftY = 0.0f;
-    viewport.Width = static_cast<FLOAT>(std::max(1, g_hdrPreview.width));
-    viewport.Height = static_cast<FLOAT>(std::max(1, g_hdrPreview.height));
-    viewport.MinDepth = 0.0f;
-    viewport.MaxDepth = 1.0f;
-    ComMethod<SetViewportsFn>(g_hdrPreview.context, 44)(g_hdrPreview.context, 1, &viewport);
-    ComMethod<SetPrimitiveTopologyFn>(g_hdrPreview.context, 24)(g_hdrPreview.context, kD3d11PrimitiveTopologyTriangleList);
-    ComMethod<SetShaderFn>(g_hdrPreview.context, 11)(g_hdrPreview.context, g_hdrPreview.vertexShader, NULL, 0);
-    ComMethod<SetShaderFn>(g_hdrPreview.context, 9)(g_hdrPreview.context, g_hdrPreview.pixelShader, NULL, 0);
-    ComMethod<DrawFn>(g_hdrPreview.context, 13)(g_hdrPreview.context, 3, 0);
-
-    HRESULT hr = ComMethod<PresentFn>(g_hdrPreview.swapChain, 8)(g_hdrPreview.swapChain, 1, 0);
-    return SUCCEEDED(hr);
 }
 
 LRESULT CALLBACK HdrPreviewWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -5349,16 +3134,16 @@ LRESULT CALLBACK HdrPreviewWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
         PAINTSTRUCT ps = {};
         BeginPaint(hwnd, &ps);
         EndPaint(hwnd, &ps);
-        RenderHdrPreview();
+        HdrPreviewRender(&g_hdrPreview);
         return 0;
     }
     case WM_SIZE:
-        if (hwnd == g_hdrPreviewWindow && g_hdrPreview.swapChain) {
+        if (hwnd == g_hdrPreviewWindow && HdrPreviewHasSwapChain(g_hdrPreview)) {
             int width = LOWORD(lParam);
             int height = HIWORD(lParam);
-            ResizeHdrPreviewSwapChain(width, height);
+            HdrPreviewResize(&g_hdrPreview, width, height);
             ApplyHdrPreviewRegion(hwnd, width, height);
-            RenderHdrPreview();
+            HdrPreviewRender(&g_hdrPreview);
         }
         return 0;
     case WM_MOUSEWHEEL:
@@ -5381,7 +3166,7 @@ LRESULT CALLBACK HdrPreviewWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
         return TRUE;
     case WM_DESTROY:
         if (hwnd == g_hdrPreviewWindow) {
-            ReleaseHdrPreviewDevice();
+            HdrPreviewReleaseDevice(&g_hdrPreview);
             g_hdrPreviewWindow = NULL;
         }
         return 0;
@@ -5411,7 +3196,7 @@ void DestroyHdrPreviewWindow() {
     if (hwnd) {
         DestroyWindow(hwnd);
     } else {
-        ReleaseHdrPreviewDevice();
+        HdrPreviewReleaseDevice(&g_hdrPreview);
     }
     UnregisterClassW(L"HdrSdrBrightnessHdrPreviewWindow", g_instance);
 }
@@ -5442,7 +3227,8 @@ void UpdateHdrPreviewWindow(HWND hwnd) {
                  SWP_NOACTIVATE | SWP_NOOWNERZORDER | (shouldShow ? 0 : SWP_HIDEWINDOW));
     ApplyHdrPreviewRegion(g_hdrPreviewWindow, pw, ph);
 
-    if (!shouldShow || !EnsureHdrPreviewReady(g_hdrPreviewWindow, pw, ph) || !RenderHdrPreview()) {
+    if (!shouldShow || !HdrPreviewEnsureReady(&g_hdrPreview, g_hdrPreviewWindow, pw, ph, g_theme.card) ||
+        !HdrPreviewRender(&g_hdrPreview)) {
         ShowWindow(g_hdrPreviewWindow, SW_HIDE);
         return;
     }
@@ -5490,7 +3276,7 @@ void DrawTimeStepper(HDC dc, const SettingsLayout& layout, const wchar_t* label,
     DrawLiquidGlassPanel(dc, TimeStepperValueX(layout), y - 6, 88, 32, 8, g_theme.elevated, g_theme.elevated);
 
     RECT timeRect = UiBox(TimeStepperValueX(layout), y - 6, 88, 32);
-    std::wstring time = TimeText(hour, minute);
+    std::wstring time = night_mode::TimeText(hour, minute);
     DrawTextLine(dc, time.c_str(), timeRect, g_sectionFont, g_theme.titleText, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     DrawPlusMinusIcon(dc, TimeStepperMinusX(layout) + 9, y + 7, 10, false, g_theme.titleText);
     DrawPlusMinusIcon(dc, TimeStepperPlusX(layout) + 9, y + 7, 10, true, g_theme.titleText);
@@ -6095,23 +3881,7 @@ LRESULT CALLBACK NotificationWndProc(HWND hwnd, UINT message, WPARAM wParam, LPA
     case WM_PAINT: {
         PAINTSTRUCT ps = {};
         HDC dc = BeginPaint(hwnd, &ps);
-        RECT client = {};
-        GetClientRect(hwnd, &client);
-        HDC memDc = CreateCompatibleDC(dc);
-        HBITMAP memBitmap = CreateCompatibleBitmap(dc, client.right - client.left, client.bottom - client.top);
-        if (!memDc || !memBitmap) {
-            if (memBitmap) DeleteObject(memBitmap);
-            if (memDc) DeleteDC(memDc);
-            DrawNotificationChrome(hwnd, dc);
-            EndPaint(hwnd, &ps);
-            return 0;
-        }
-        HGDIOBJ oldBitmap = SelectObject(memDc, memBitmap);
-        DrawNotificationChrome(hwnd, memDc);
-        BitBlt(dc, 0, 0, client.right - client.left, client.bottom - client.top, memDc, 0, 0, SRCCOPY);
-        SelectObject(memDc, oldBitmap);
-        DeleteObject(memBitmap);
-        DeleteDC(memDc);
+        ui_backbuffer::Draw(hwnd, dc, DrawNotificationChrome);
         EndPaint(hwnd, &ps);
         return 0;
     }
@@ -6254,9 +4024,9 @@ void RefreshSupportWindowStatus(HWND hwnd) {
 }
 
 void ActivateSupporterCode(HWND hwnd) {
-    std::wstring code = NormalizeSupporterCode(g_supportCodeInput);
+    std::wstring code = supporter_code::Normalize(g_supportCodeInput);
 
-    if (!IsValidSupporterCode(code)) {
+    if (!supporter_code::IsValid(code)) {
         g_supportStatus = T(TxtSupportInvalidCode);
         RefreshSupportWindowStatus(hwnd);
         return;
@@ -6315,7 +4085,7 @@ void SetSupportCodeFocus(HWND hwnd, bool focused) {
 }
 
 bool SetSupporterCodeInputFromText(const std::wstring& value) {
-    std::wstring normalized = NormalizeSupporterCode(value);
+    std::wstring normalized = supporter_code::Normalize(value);
     if (normalized.empty()) return false;
     if (normalized.size() > kSupporterCodeMaxLength) normalized.resize(kSupporterCodeMaxLength);
     g_supportCodeInput = normalized;
@@ -6418,7 +4188,7 @@ void DrawSupportWindowChrome(HWND hwnd, HDC dc) {
                         : (HasSupporterBadge() ? std::wstring(T(TxtSupportThanks)) : std::wstring());
     RECT statusRect = UiBox(24, 149, 420, 22);
     DrawTextLine(dc, status.c_str(), statusRect, g_smallFont,
-                 IsValidSupporterCode(g_config.supporterCode) ? Rgb(34, 197, 94) : g_theme.mutedText,
+                supporter_code::IsValid(g_config.supporterCode) ? Rgb(34, 197, 94) : g_theme.mutedText,
                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     DrawFooterButton(dc, 226, 188, 104, T(TxtSupportDonate), false,
@@ -6446,23 +4216,7 @@ LRESULT CALLBACK SupportWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
     case WM_PAINT: {
         PAINTSTRUCT ps = {};
         HDC dc = BeginPaint(hwnd, &ps);
-        RECT client = {};
-        GetClientRect(hwnd, &client);
-        HDC memDc = CreateCompatibleDC(dc);
-        HBITMAP memBitmap = CreateCompatibleBitmap(dc, client.right - client.left, client.bottom - client.top);
-        if (!memDc || !memBitmap) {
-            if (memBitmap) DeleteObject(memBitmap);
-            if (memDc) DeleteDC(memDc);
-            DrawSupportWindowChrome(hwnd, dc);
-            EndPaint(hwnd, &ps);
-            return 0;
-        }
-        HGDIOBJ oldBitmap = SelectObject(memDc, memBitmap);
-        DrawSupportWindowChrome(hwnd, memDc);
-        BitBlt(dc, 0, 0, client.right - client.left, client.bottom - client.top, memDc, 0, 0, SRCCOPY);
-        SelectObject(memDc, oldBitmap);
-        DeleteObject(memBitmap);
-        DeleteDC(memDc);
+        ui_backbuffer::Draw(hwnd, dc, DrawSupportWindowChrome);
         EndPaint(hwnd, &ps);
         return 0;
     }
@@ -6564,7 +4318,7 @@ LRESULT CALLBACK SupportWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM l
         } else if (ch == L'\r') {
             ActivateSupporterCode(hwnd);
             return 0;
-        } else if (IsSupporterCodeChar(ch) && g_supportCodeInput.size() < kSupporterCodeMaxLength) {
+        } else if (supporter_code::IsAllowedCharacter(ch) && g_supportCodeInput.size() < kSupporterCodeMaxLength) {
             wchar_t normalized = ch;
             if (normalized >= L'a' && normalized <= L'z') normalized = static_cast<wchar_t>(normalized - L'a' + L'A');
             g_supportCodeInput.push_back(normalized);
@@ -7130,22 +4884,22 @@ void HandleSettingsClick(HWND hwnd, POINT pt) {
     }
 
     if (!useSystem && PtInUiBox(pt, TimeStepperMinusX(layout), layout.switchNightY - 4, 28, 28)) {
-        AddMinutesToTime(&g_settingsDraft.nightStartHour, &g_settingsDraft.nightStartMinute, -30);
+        night_mode::AddMinutesToTime(&g_settingsDraft.nightStartHour, &g_settingsDraft.nightStartMinute, -30);
         InvalidateRect(hwnd, NULL, FALSE);
         return;
     }
     if (!useSystem && PtInUiBox(pt, TimeStepperPlusX(layout), layout.switchNightY - 4, 28, 28)) {
-        AddMinutesToTime(&g_settingsDraft.nightStartHour, &g_settingsDraft.nightStartMinute, 30);
+        night_mode::AddMinutesToTime(&g_settingsDraft.nightStartHour, &g_settingsDraft.nightStartMinute, 30);
         InvalidateRect(hwnd, NULL, FALSE);
         return;
     }
     if (!useSystem && PtInUiBox(pt, TimeStepperMinusX(layout), layout.switchDayY - 4, 28, 28)) {
-        AddMinutesToTime(&g_settingsDraft.dayStartHour, &g_settingsDraft.dayStartMinute, -30);
+        night_mode::AddMinutesToTime(&g_settingsDraft.dayStartHour, &g_settingsDraft.dayStartMinute, -30);
         InvalidateRect(hwnd, NULL, FALSE);
         return;
     }
     if (!useSystem && PtInUiBox(pt, TimeStepperPlusX(layout), layout.switchDayY - 4, 28, 28)) {
-        AddMinutesToTime(&g_settingsDraft.dayStartHour, &g_settingsDraft.dayStartMinute, 30);
+        night_mode::AddMinutesToTime(&g_settingsDraft.dayStartHour, &g_settingsDraft.dayStartMinute, 30);
         InvalidateRect(hwnd, NULL, FALSE);
         return;
     }
@@ -7198,7 +4952,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         } else {
             ResizeSettingsWindowToLayout(hwnd);
         }
-        ResetHdrPreviewDevice();
+        HdrPreviewResetDevice(&g_hdrPreview);
         UpdateHdrPreviewWindow(hwnd);
         InvalidateRect(hwnd, NULL, TRUE);
         return 0;
@@ -7225,23 +4979,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
     case WM_PAINT: {
         PAINTSTRUCT ps = {};
         HDC dc = BeginPaint(hwnd, &ps);
-        RECT client = {};
-        GetClientRect(hwnd, &client);
-        HDC memDc = CreateCompatibleDC(dc);
-        HBITMAP memBitmap = CreateCompatibleBitmap(dc, client.right - client.left, client.bottom - client.top);
-        if (!memDc || !memBitmap) {
-            if (memBitmap) DeleteObject(memBitmap);
-            if (memDc) DeleteDC(memDc);
-            DrawSettingsChrome(hwnd, dc);
-            EndPaint(hwnd, &ps);
-            return 0;
-        }
-        HGDIOBJ oldBitmap = SelectObject(memDc, memBitmap);
-        DrawSettingsChrome(hwnd, memDc);
-        BitBlt(dc, 0, 0, client.right - client.left, client.bottom - client.top, memDc, 0, 0, SRCCOPY);
-        SelectObject(memDc, oldBitmap);
-        DeleteObject(memBitmap);
-        DeleteDC(memDc);
+        ui_backbuffer::Draw(hwnd, dc, DrawSettingsChrome);
         UpdateHdrPreviewWindow(hwnd);
         EndPaint(hwnd, &ps);
         return 0;
@@ -7503,13 +5241,13 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM 
         SyncStoreStartupStateToSettingsDraft(hwnd);
         ApplyModernWindowFrame(hwnd);
         UpdateSettingsWindowTitle(hwnd);
-        ResetHdrPreviewDevice();
+        HdrPreviewResetDevice(&g_hdrPreview);
         UpdateHdrPreviewWindow(hwnd);
         InvalidateRect(hwnd, NULL, TRUE);
         return 0;
     case WM_MOVE:
     case WM_DISPLAYCHANGE:
-        UpdateHdrPreviewColorSpace();
+        HdrPreviewUpdateColorSpace(&g_hdrPreview);
         UpdateHdrPreviewWindow(hwnd);
         return 0;
     case WM_CLOSE:
@@ -7604,69 +5342,12 @@ void ShowSettingsWindow(HWND owner) {
     UpdateWindow(g_settingsWindow);
 }
 
-DWORD WINAPI RegistryThreadProc(LPVOID) {
-    HKEY cloudKey = NULL;
-    HKEY appKey = NULL;
-    RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store", 0, KEY_NOTIFY, &cloudKey);
-    RegCreateKeyExW(HKEY_CURRENT_USER, kConfigKey, 0, NULL, 0, KEY_NOTIFY, NULL, &appKey, NULL);
-
-    HANDLE cloudEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
-    HANDLE appEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
-    if (!cloudEvent || !appEvent) {
-        if (cloudEvent) CloseHandle(cloudEvent);
-        if (appEvent) CloseHandle(appEvent);
-        if (cloudKey) RegCloseKey(cloudKey);
-        if (appKey) RegCloseKey(appKey);
-        return 0;
-    }
-    HANDLE events[3] = {g_stopEvent, cloudEvent, appEvent};
-
-    while (WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
-        if (cloudKey) {
-            ResetEvent(cloudEvent);
-            RegNotifyChangeKeyValue(cloudKey, TRUE, REG_NOTIFY_CHANGE_NAME | REG_NOTIFY_CHANGE_LAST_SET, cloudEvent, TRUE);
-        }
-        if (appKey) {
-            ResetEvent(appEvent);
-            RegNotifyChangeKeyValue(appKey, TRUE, REG_NOTIFY_CHANGE_NAME | REG_NOTIFY_CHANGE_LAST_SET, appEvent, TRUE);
-        }
-
-        DWORD wait = WaitForMultipleObjects(3, events, FALSE, INFINITE);
-        if (wait == WAIT_OBJECT_0) break;
-        if (g_mainWindow) PostMessageW(g_mainWindow, kRegistryChangedMessage, 0, 0);
-    }
-
-    if (cloudEvent) CloseHandle(cloudEvent);
-    if (appEvent) CloseHandle(appEvent);
-    if (cloudKey) RegCloseKey(cloudKey);
-    if (appKey) RegCloseKey(appKey);
-    return 0;
-}
-
 void StartRegistryThread() {
-    g_stopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
-    if (!g_stopEvent) return;
-    g_registryThread = CreateThread(NULL, 0, RegistryThreadProc, NULL, 0, NULL);
-    if (!g_registryThread) {
-        CloseHandle(g_stopEvent);
-        g_stopEvent = NULL;
-    }
+    registry_watcher::Start(&g_registryWatcher, g_mainWindow, kRegistryChangedMessage, kConfigKey);
 }
 
 void StopRegistryThread() {
-    if (g_stopEvent) SetEvent(g_stopEvent);
-    if (g_registryThread) {
-        DWORD wait = WaitForSingleObject(g_registryThread, 3000);
-        CloseHandle(g_registryThread);
-        g_registryThread = NULL;
-        if (wait != WAIT_OBJECT_0) {
-            return;
-        }
-    }
-    if (g_stopEvent) {
-        CloseHandle(g_stopEvent);
-        g_stopEvent = NULL;
-    }
+    registry_watcher::Stop(&g_registryWatcher);
 }
 
 LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -7704,7 +5385,8 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
         }
         if (wParam == kCaptureWarmupTimer) {
             KillTimer(hwnd, kCaptureWarmupTimer);
-            StartCaptureHelperServer();
+            StartNativeCaptureHelperServer();
+            StartNativeEditorWarmup();
             return 0;
         }
         break;
@@ -7737,6 +5419,39 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
             return 0;
         }
         break;
+    case kRegionCaptureDoneMessage: {
+        auto* result = reinterpret_cast<RegionCaptureResult*>(lParam);
+        if (!result) return 0;
+        capture_request::CompletionDecision completion =
+            g_regionCaptureRequests.Complete(result->generation);
+        bool captured = result->captured;
+        bool helperMissing = result->helperMissing;
+        std::wstring editCommand = result->editCommand;
+        delete result;
+
+        if (completion.action == capture_request::CompletionAction::StartLatest) {
+            StartRegionCapture(hwnd, completion.generation);
+            return 0;
+        }
+        if (completion.action != capture_request::CompletionAction::ShowResult) {
+            return 0;
+        }
+        if (!captured) {
+            ShowTrayNotification(T(TxtMenuHdrScreenshot),
+                                 T(helperMissing ? TxtCaptureHelperMissing
+                                                 : TxtCaptureLaunchFailed),
+                                 NotificationActionDefault);
+            return 0;
+        }
+
+        editor_window_control::CloseAll();
+        if (!LaunchDetached(editCommand,
+                            DirectoryFromPath(fullscreen_capture::GetEditorHelperPath()))) {
+            ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtCaptureLaunchFailed),
+                                 NotificationActionDefault);
+        }
+        return 0;
+    }
     case kFullscreenDoneMessage:
         if (wParam) {
             ShowTrayNotification(T(TxtMenuHdrScreenshot), T(TxtHotkeyCopied),
@@ -7835,7 +5550,7 @@ bool CreateMainWindow() {
 
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int) {
     g_instance = instance;
-    bool openSettingsOnLaunch = ShouldOpenSettingsOnLaunch();
+    bool openSettingsOnLaunch = launch_mode::ShouldOpenSettingsOnLaunch();
     bool backgroundLaunch = !openSettingsOnLaunch;
     g_taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
 
@@ -7847,7 +5562,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int) {
     }
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         if (openSettingsOnLaunch) {
-            ShowSettingsInExistingInstance();
+            launch_mode::ShowSettingsInExistingInstance(kMenuSettings);
         }
         CloseHandle(mutex);
         return 0;

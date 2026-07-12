@@ -15,8 +15,10 @@ $obj = Join-Path $root 'obj'
 $bin = Join-Path $root 'bin'
 $dist = Join-Path $root 'dist'
 $store = Join-Path $root 'store'
-$exe = Join-Path $bin 'HdrSdrBrightness.exe'
-$captureDir = Join-Path $bin 'capture'
+$buildRoot = Join-Path $obj 'msix\build'
+$payloadRoot = if ($SkipBuild) { $bin } else { $buildRoot }
+$exe = Join-Path $payloadRoot 'HdrSdrBrightness.exe'
+$captureDir = Join-Path $payloadRoot 'capture'
 $manifestTemplate = Join-Path $store 'AppxManifest.xml.in'
 $packageRoot = Join-Path $obj 'msix\package'
 $assetsRoot = Join-Path $packageRoot 'Assets'
@@ -121,12 +123,15 @@ $msixVersion = Convert-ToMsixVersion -Value $Version
 $makeappx = Find-WindowsSdkTool -Name 'makeappx.exe' -RequestedPath $MakeAppxPath
 
 if (-not $SkipBuild) {
+    Assert-PathInside -Root $root -Path $buildRoot
+    if (Test-Path -LiteralPath $buildRoot) {
+        Remove-Item -LiteralPath $buildRoot -Recurse -Force
+    }
+
     $buildArgs = @{
         Version = $Version
         Store = $true
-    }
-    if ($Clean) {
-        $buildArgs.Clean = $true
+        OutputDir = $buildRoot
     }
     & (Join-Path $root 'build.ps1') @buildArgs
     if ($LASTEXITCODE -ne 0) {
@@ -137,8 +142,11 @@ if (-not $SkipBuild) {
 if (-not (Test-Path -LiteralPath $exe)) {
     throw "Missing executable: $exe"
 }
-if (-not (Test-Path -LiteralPath (Join-Path $captureDir 'HdrSdrCapture.exe'))) {
-    throw "Missing capture helper: $captureDir"
+if (-not (Test-Path -LiteralPath (Join-Path $captureDir 'HdrSdrNativeCapture.exe'))) {
+    throw "Missing native capture helper: $captureDir"
+}
+if (-not (Test-Path -LiteralPath (Join-Path $captureDir 'HdrSdrNativeEditor.exe'))) {
+    throw "Missing editor helper: $captureDir"
 }
 if (-not (Test-Path -LiteralPath $manifestTemplate)) {
     throw "Missing manifest template: $manifestTemplate"
