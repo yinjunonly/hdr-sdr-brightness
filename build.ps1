@@ -177,7 +177,7 @@ $versionHeaderContent = @"
     $manifestContent = (Get-Content -LiteralPath $manifestTemplate -Raw).Replace('@VERSION4@', $version4)
     Set-Content -LiteralPath $manifest -Value $manifestContent -Encoding UTF8
 
-    & $windres --codepage=65001 -I $root $res -O coff -o $resObj
+    & $windres --codepage=65001 -I $root -I $obj $res -O coff -o $resObj
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }

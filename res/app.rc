@@ -1,9 +1,9 @@
 #define IDI_APPICON 101
 #include <winver.h>
-#include "obj/version.h"
+#include "version.h"
 
 IDI_APPICON ICON "assets/app.ico"
-1 RT_MANIFEST "obj/app.manifest"
+1 RT_MANIFEST "app.manifest"
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION APP_VERSION_COMMA
