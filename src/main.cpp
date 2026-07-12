@@ -5375,6 +5375,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
         return 0;
     case WM_TIMER:
         if (wParam == kRecheckTimer) {
+            night_mode::InvalidateActiveStateCache();
             ApplyCurrentBrightness(false);
             CheckWeeklySupportReminder();
             return 0;

@@ -41,6 +41,9 @@ Invoke-Checked 'Native image/editor unit tests' {
 Invoke-Checked 'Native capture unit tests' {
     & (Join-Path $root 'native_capture_tests\build.ps1')
 }
+Invoke-Checked 'App state unit tests' {
+    & (Join-Path $root 'app_tests\build.ps1')
+}
 Invoke-Checked 'Hidden warmup launch contract' {
     & (Join-Path $root 'native_capture_tests\background_server_launch_test.ps1')
 }
