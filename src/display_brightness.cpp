@@ -234,6 +234,45 @@ UINT32 BrightnessPercentToSdrLevel(int brightness) {
     return 1000u + static_cast<UINT32>(brightness) * 50u;
 }
 
+int SdrWhiteLevelToBrightnessPercent(UINT32 level) {
+    if (level <= 1000u) return 0;
+    if (level >= 6000u) return 100;
+    return static_cast<int>((level - 1000u + 25u) / 50u);
+}
+
+bool ReadCurrentSdrBrightness(int* brightness) {
+    if (!brightness) return false;
+
+    DisplayConfigApi api = {};
+    if (!LoadDisplayConfigApi(&api)) return false;
+
+    std::vector<AppDisplayConfigPathInfo> paths;
+    if (!QueryActivePaths(&api, &paths)) return false;
+
+    bool found = false;
+    int sharedBrightness = 0;
+    for (size_t i = 0; i < paths.size(); ++i) {
+        const AppDisplayConfigPathInfo& path = paths[i];
+        if ((path.flags & kDisplayConfigPathActive) == 0 || !path.targetInfo.targetAvailable) continue;
+        if (!IsHdrEnabled(&api, path)) continue;
+
+        UINT32 level = 0;
+        if (!GetSdrWhiteLevel(&api, path, &level)) return false;
+
+        int current = SdrWhiteLevelToBrightnessPercent(level);
+        if (!found) {
+            sharedBrightness = current;
+            found = true;
+        } else if (current != sharedBrightness) {
+            return false;
+        }
+    }
+
+    if (!found) return false;
+    *brightness = sharedBrightness;
+    return true;
+}
+
 ApplyResult ApplySdrLevelStep(UINT32 targetLevel, bool smooth, UINT32 fallbackCurrentLevel,
                               UINT32 transitionStepLevel) {
     ApplyResult result;

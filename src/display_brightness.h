@@ -24,6 +24,8 @@ struct ApplyResult {
 };
 
 UINT32 BrightnessPercentToSdrLevel(int brightness);
+int SdrWhiteLevelToBrightnessPercent(UINT32 level);
+bool ReadCurrentSdrBrightness(int* brightness);
 ApplyResult ApplySdrLevelStep(UINT32 targetLevel, bool smooth, UINT32 fallbackCurrentLevel,
                               UINT32 transitionStepLevel);
 ApplyResult CheckSdrBrightness(int brightness);

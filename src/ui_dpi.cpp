@@ -94,6 +94,54 @@ Dpi DpiForNewTopLevelWindow(HWND owner) {
 
 }  // namespace
 
+bool EnablePerMonitorV2() {
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (user32) {
+        typedef BOOL(WINAPI* SetProcessDpiAwarenessContextFn)(HANDLE);
+        SetProcessDpiAwarenessContextFn setContext =
+            reinterpret_cast<SetProcessDpiAwarenessContextFn>(
+                GetProcAddress(user32, "SetProcessDpiAwarenessContext"));
+        if (setContext) {
+            HANDLE perMonitorV2 = reinterpret_cast<HANDLE>(static_cast<INT_PTR>(-4));
+            if (setContext(perMonitorV2)) {
+                return true;
+            }
+            if (GetLastError() == ERROR_ACCESS_DENIED) {
+                return true;
+            }
+        }
+    }
+
+    HMODULE shcore = LoadLibraryW(L"shcore.dll");
+    if (shcore) {
+        typedef HRESULT(WINAPI* SetProcessDpiAwarenessFn)(int);
+        SetProcessDpiAwarenessFn setAwareness =
+            reinterpret_cast<SetProcessDpiAwarenessFn>(
+                GetProcAddress(shcore, "SetProcessDpiAwareness"));
+        if (setAwareness) {
+            HRESULT result = setAwareness(2);
+            FreeLibrary(shcore);
+            if (SUCCEEDED(result) || result == E_ACCESSDENIED) {
+                return true;
+            }
+        } else {
+            FreeLibrary(shcore);
+        }
+    }
+
+    if (user32) {
+        typedef BOOL(WINAPI* SetProcessDPIAwareFn)();
+        SetProcessDPIAwareFn setAware =
+            reinterpret_cast<SetProcessDPIAwareFn>(
+                GetProcAddress(user32, "SetProcessDPIAware"));
+        if (setAware) {
+            return setAware() != FALSE || GetLastError() == ERROR_ACCESS_DENIED;
+        }
+    }
+
+    return false;
+}
+
 Dpi Current() {
     return {g_dpiX, g_dpiY};
 }

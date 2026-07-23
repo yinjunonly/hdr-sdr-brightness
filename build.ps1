@@ -2,7 +2,8 @@ param(
     [switch]$Clean,
     [string]$Version,
     [switch]$Store,
-    [string]$OutputDir
+    [string]$OutputDir,
+    [string]$MtPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,6 +33,7 @@ $obj = if ([string]::IsNullOrWhiteSpace($OutputDir)) {
 $sources = @(
     (Join-Path $root 'src\main.cpp'),
     (Join-Path $root 'src\app_hotkeys.cpp'),
+    (Join-Path $root 'src\brightness_initialization.cpp'),
     (Join-Path $root 'src\capture_pipe.cpp'),
     (Join-Path $root 'src\capture_paths.cpp'),
     (Join-Path $root 'src\capture_request_queue.cpp'),
@@ -45,6 +47,7 @@ $sources = @(
     (Join-Path $root 'src\registry_util.cpp'),
     (Join-Path $root 'src\registry_watcher.cpp'),
     (Join-Path $root 'src\startup_integration.cpp'),
+    (Join-Path $root 'src\store_startup_policy.cpp'),
     (Join-Path $root 'src\supporter_code.cpp'),
     (Join-Path $root 'src\tray_icon.cpp'),
     (Join-Path $root 'src\ui_backbuffer.cpp'),
@@ -120,6 +123,37 @@ function Resolve-BuildTool {
     throw "Missing build tool: $Name"
 }
 
+function Resolve-WindowsSdkTool {
+    param(
+        [string]$Name,
+        [string]$RequestedPath
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($RequestedPath)) {
+        if (-not (Test-Path -LiteralPath $RequestedPath)) {
+            throw "Missing Windows SDK tool: $RequestedPath"
+        }
+        return (Resolve-Path -LiteralPath $RequestedPath).Path
+    }
+
+    $command = Get-Command $Name -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $kitBin = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+    if (Test-Path -LiteralPath $kitBin) {
+        $matches = Get-ChildItem -LiteralPath $kitBin -Recurse -Filter $Name -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\' } |
+            Sort-Object FullName -Descending
+        if ($matches) {
+            return $matches[0].FullName
+        }
+    }
+
+    throw "Missing Windows SDK tool: $Name. Install the Windows SDK or pass -MtPath."
+}
+
 $Version = Get-ProjectVersion -Root $root -RequestedVersion $Version
 $versionParts = Convert-ToResourceVersion -Version $Version
 $version4 = $versionParts -join '.'
@@ -154,6 +188,7 @@ $windres = Resolve-BuildTool -Name 'windres' -FallbackPaths @(
     'C:\msys64\mingw64\bin\windres.exe',
     'C:\msys64\ucrt64\bin\windres.exe'
 )
+$mt = Resolve-WindowsSdkTool -Name 'mt.exe' -RequestedPath $MtPath
 $toolDir = Split-Path -Parent $gpp
 if ($toolDir -and ($env:PATH -notlike "*$toolDir*")) {
     $env:PATH = $toolDir + [IO.Path]::PathSeparator + $env:PATH
@@ -207,6 +242,11 @@ $versionHeaderContent = @"
         -lgdiplus `
         -ladvapi32
 
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+
+    & $mt -nologo -manifest $manifest "-outputresource:$exe;#1"
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }

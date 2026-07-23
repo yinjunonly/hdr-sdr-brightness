@@ -10,6 +10,7 @@
 
 #include "process_util.h"
 #include "registry_util.h"
+#include "store_startup_policy.h"
 
 namespace startup_integration {
 namespace {
@@ -20,6 +21,9 @@ const wchar_t kLegacyOledAppName[] = L"OledHdrSdrSync";
 const wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const wchar_t kStartupTaskName[] = L"HdrSdrBrightness";
 const wchar_t kStoreStartupTaskId[] = L"HdrSdrBrightnessStartup";
+const wchar_t kStoreFastStartupTaskName[] = L"HdrSdrBrightnessStoreFastStartup";
+const wchar_t kStoreExecutionAliasName[] = L"HdrSdrBrightnessStore.exe";
+const wchar_t kStoreFastStartupArguments[] = L"--background --store-fast-startup";
 
 enum StoreStartupTaskState {
     StoreStartupTaskDisabled = 0,
@@ -474,18 +478,18 @@ void SetRunKeyStartupEnabled(bool enabled) {
     RegCloseKey(key);
 }
 
-bool IsScheduledTaskStartupEnabled() {
-    std::wstring command = L"schtasks.exe /Query /TN " + QuoteCommandLineArgument(kStartupTaskName);
+bool IsScheduledTaskEnabled(const std::wstring& taskName) {
+    std::wstring command = L"schtasks.exe /Query /TN " + QuoteCommandLineArgument(taskName);
     return RunHiddenCommand(command, 3000);
 }
 
-bool DeleteScheduledTaskStartup() {
-    if (!IsScheduledTaskStartupEnabled()) return true;
-    std::wstring command = L"schtasks.exe /Delete /TN " + QuoteCommandLineArgument(kStartupTaskName) + L" /F";
+bool DeleteScheduledTask(const std::wstring& taskName) {
+    if (!IsScheduledTaskEnabled(taskName)) return true;
+    std::wstring command = L"schtasks.exe /Delete /TN " + QuoteCommandLineArgument(taskName) + L" /F";
     if (RunHiddenCommand(command, 5000)) return true;
 
     std::wstring script =
-        L"Unregister-ScheduledTask -TaskName " + QuotePowerShellString(kStartupTaskName) +
+        L"Unregister-ScheduledTask -TaskName " + QuotePowerShellString(taskName) +
         L" -Confirm:$false -ErrorAction SilentlyContinue";
     std::wstring powershell =
         L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command " +
@@ -493,12 +497,14 @@ bool DeleteScheduledTaskStartup() {
     return RunHiddenCommand(powershell, 10000);
 }
 
-bool SetScheduledTaskStartupEnabled(bool enabled) {
-    if (!enabled) return DeleteScheduledTaskStartup();
-
-    std::wstring action = QuoteCommandLineArgument(GetExePath()) + L" --background";
+bool CreateLogonScheduledTask(const std::wstring& taskName,
+                              const std::wstring& executable,
+                              const std::wstring& arguments) {
+    if (taskName.empty() || executable.empty()) return false;
+    std::wstring action = QuoteCommandLineArgument(executable);
+    if (!arguments.empty()) action += L" " + arguments;
     std::wstring command =
-        L"schtasks.exe /Create /TN " + QuoteCommandLineArgument(kStartupTaskName) +
+        L"schtasks.exe /Create /TN " + QuoteCommandLineArgument(taskName) +
         L" /SC ONLOGON /TR " + QuoteCommandLineArgument(action) +
         L" /RL LIMITED /F";
     if (RunHiddenCommand(command, 5000)) return true;
@@ -506,13 +512,13 @@ bool SetScheduledTaskStartupEnabled(bool enabled) {
     std::wstring script =
         L"$ErrorActionPreference='Stop';"
         L"$user=[System.Security.Principal.WindowsIdentity]::GetCurrent().Name;"
-        L"$action=New-ScheduledTaskAction -Execute " + QuotePowerShellString(GetExePath()) +
-        L" -Argument '--background';"
+        L"$action=New-ScheduledTaskAction -Execute " + QuotePowerShellString(executable) +
+        L" -Argument " + QuotePowerShellString(arguments) + L";"
         L"$trigger=New-ScheduledTaskTrigger -AtLogOn -User $user;"
         L"$principal=New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited;"
         L"$settings=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries "
         L"-ExecutionTimeLimit (New-TimeSpan -Seconds 0);"
-        L"Register-ScheduledTask -TaskName " + QuotePowerShellString(kStartupTaskName) +
+        L"Register-ScheduledTask -TaskName " + QuotePowerShellString(taskName) +
         L" -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null";
     std::wstring powershell =
         L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command " +
@@ -520,36 +526,60 @@ bool SetScheduledTaskStartupEnabled(bool enabled) {
     return RunHiddenCommand(powershell, 15000);
 }
 
-}  // namespace
-
-bool IsStoreStartupEnabled() {
-    StoreWinRtApi api;
-    bool apiLoaded = LoadStoreWinRtApi(&api);
-
-    StoreIStartupTask* task = NULL;
-    int state = StoreStartupTaskDisabled;
-    bool hasState = false;
-    bool enabled = false;
-    if (apiLoaded && GetStoreStartupTask(&api, &task)) {
-        if (SUCCEEDED(task->lpVtbl->get_State(task, &state))) {
-            hasState = true;
-        }
-        task->lpVtbl->Release(task);
-    }
-
-    if (!hasState) {
-        hasState = TryReadStoreStartupStateFromRegistry(&state);
-    }
-
-    if (hasState) {
-        enabled = state == StoreStartupTaskEnabled || state == StoreStartupTaskEnabledByPolicy;
-    }
-
-    if (apiLoaded) UnloadStoreWinRtApi(&api);
-    return enabled;
+bool IsScheduledTaskStartupEnabled() {
+    return IsScheduledTaskEnabled(kStartupTaskName);
 }
 
-bool SetStoreStartupEnabled(bool enabled) {
+bool SetScheduledTaskStartupEnabled(bool enabled) {
+    if (!enabled) return DeleteScheduledTask(kStartupTaskName);
+    return CreateLogonScheduledTask(kStartupTaskName, GetExePath(), L"--background");
+}
+
+std::wstring GetStoreExecutionAliasPath() {
+    DWORD required = GetEnvironmentVariableW(L"LOCALAPPDATA", NULL, 0);
+    if (required == 0) return L"";
+
+    std::vector<wchar_t> buffer(required, L'\0');
+    DWORD written = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer.data(), required);
+    if (written == 0 || written >= required) return L"";
+
+    return JoinPath(JoinPath(buffer.data(), L"Microsoft\\WindowsApps"),
+                    kStoreExecutionAliasName);
+}
+
+bool IsStoreFastStartupEnabledInternal() {
+    return IsScheduledTaskEnabled(kStoreFastStartupTaskName);
+}
+
+bool SetStoreFastStartupEnabledInternal(bool enabled) {
+    if (!enabled) return DeleteScheduledTask(kStoreFastStartupTaskName);
+    std::wstring aliasPath = GetStoreExecutionAliasPath();
+    if (aliasPath.empty() || !FileExists(aliasPath)) return false;
+    return CreateLogonScheduledTask(kStoreFastStartupTaskName, aliasPath,
+                                    kStoreFastStartupArguments);
+}
+
+bool IsStoreStartupTaskEnabledInternal(bool preferRegistry) {
+    int state = StoreStartupTaskDisabled;
+    if (preferRegistry && TryReadStoreStartupStateFromRegistry(&state)) {
+        return state == StoreStartupTaskEnabled || state == StoreStartupTaskEnabledByPolicy;
+    }
+
+    StoreWinRtApi api;
+    bool apiLoaded = LoadStoreWinRtApi(&api);
+    StoreIStartupTask* task = NULL;
+    bool hasState = false;
+    if (apiLoaded && GetStoreStartupTask(&api, &task)) {
+        hasState = SUCCEEDED(task->lpVtbl->get_State(task, &state));
+        task->lpVtbl->Release(task);
+    }
+    if (!hasState) hasState = TryReadStoreStartupStateFromRegistry(&state);
+    if (apiLoaded) UnloadStoreWinRtApi(&api);
+    return hasState &&
+           (state == StoreStartupTaskEnabled || state == StoreStartupTaskEnabledByPolicy);
+}
+
+bool SetStoreStartupTaskEnabledInternal(bool enabled) {
     StoreWinRtApi api;
     if (!LoadStoreWinRtApi(&api)) return false;
 
@@ -578,6 +608,53 @@ cleanup:
     if (task) task->lpVtbl->Release(task);
     UnloadStoreWinRtApi(&api);
     return ok;
+}
+
+class StoreStartupBackend : public store_startup_policy::Backend {
+public:
+    explicit StoreStartupBackend(bool preferRegistry = false)
+        : preferRegistry_(preferRegistry) {}
+
+    bool IsStandardEnabled() override {
+        return IsStoreStartupTaskEnabledInternal(preferRegistry_);
+    }
+
+    bool SetStandardEnabled(bool enabled) override {
+        return SetStoreStartupTaskEnabledInternal(enabled);
+    }
+
+    bool IsFastEnabled() override {
+        return IsStoreFastStartupEnabledInternal();
+    }
+
+    bool SetFastEnabled(bool enabled) override {
+        return SetStoreFastStartupEnabledInternal(enabled);
+    }
+
+private:
+    bool preferRegistry_;
+};
+
+}  // namespace
+
+bool IsStoreStartupEnabled() {
+    StoreStartupBackend backend;
+    return backend.IsStandardEnabled();
+}
+
+bool SetStoreStartupEnabled(bool enabled) {
+    StoreStartupBackend backend;
+    return store_startup_policy::SetEnabled(backend, enabled);
+}
+
+void RepairStoreFastStartupIfNeeded() {
+    StoreStartupBackend backend;
+    store_startup_policy::Reconcile(backend);
+}
+
+bool ShouldRunStoreFastStartup() {
+    StoreStartupBackend backend(true);
+    return store_startup_policy::ShouldRunBackground(backend);
 }
 
 bool TryReadStoreAppLicenseActive(bool* active) {

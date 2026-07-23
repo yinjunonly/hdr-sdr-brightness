@@ -41,8 +41,29 @@ Invoke-Checked 'Native image/editor unit tests' {
 Invoke-Checked 'Native capture unit tests' {
     & (Join-Path $root 'native_capture_tests\build.ps1')
 }
-Invoke-Checked 'App state unit tests' {
-    & (Join-Path $root 'app_tests\build.ps1')
+Invoke-Checked 'First-run brightness initialization policy' {
+    & (Join-Path $root 'brightness_tests\build.ps1')
+}
+Invoke-Checked 'First-run brightness production wiring' {
+    & (Join-Path $root 'brightness_tests\initial_brightness_wiring_test.ps1')
+}
+Invoke-Checked 'Store startup policy unit tests' {
+    & (Join-Path $root 'startup_tests\build.ps1')
+}
+Invoke-Checked 'Store startup manifest alias' {
+    & (Join-Path $root 'startup_tests\store_manifest_alias_test.ps1')
+}
+Invoke-Checked 'Store fast startup wiring' {
+    & (Join-Path $root 'startup_tests\store_fast_startup_wiring_test.ps1')
+}
+Invoke-Checked 'Per-Monitor V2 startup fallback' {
+    & (Join-Path $root 'dpi_tests\build.ps1')
+}
+Invoke-Checked 'Desktop final executable DPI manifest' {
+    & (Join-Path $root 'dpi_tests\final_executable_manifest_test.ps1') -BuildRoot $DesktopBuildRoot
+}
+Invoke-Checked 'Store final executable DPI manifest' {
+    & (Join-Path $root 'dpi_tests\final_executable_manifest_test.ps1') -BuildRoot $StoreBuildRoot
 }
 Invoke-Checked 'Hidden warmup launch contract' {
     & (Join-Path $root 'native_capture_tests\background_server_launch_test.ps1')

@@ -9,6 +9,7 @@ struct Dpi {
     int y;
 };
 
+bool EnablePerMonitorV2();
 Dpi Current();
 bool Set(int dpiX, int dpiY);
 bool RefreshForWindow(HWND hwnd);

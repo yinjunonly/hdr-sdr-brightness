@@ -24,6 +24,7 @@
 #include "localization.h"
 #include "version.h"
 #include "app_hotkeys.h"
+#include "brightness_initialization.h"
 #include "capture_pipe.h"
 #include "capture_paths.h"
 #include "capture_request_queue.h"
@@ -220,6 +221,7 @@ tray_icon::TrayIcon g_trayIcon;
 UINT g_taskbarCreated = 0;
 Config g_config;
 Config g_settingsDraft;
+bool g_brightnessConfigReady = false;
 bool g_settingsDraftActive = false;
 bool g_hdrCalibrationCalloutDismissed = false;
 std::wstring g_status = L"Starting";
@@ -731,26 +733,60 @@ bool TrySetStartupEnabled(bool enabled) {
     return startup_integration::SetPortableStartupEnabled(enabled);
 }
 
-static DWORD WINAPI PortableStartupRepairThread(LPVOID) {
-    if (!UseStoreStartupIntegration()) {
+static DWORD WINAPI StartupRepairThread(LPVOID) {
+    if (UseStoreStartupIntegration()) {
+        startup_integration::RepairStoreFastStartupIfNeeded();
+    } else {
         startup_integration::RepairPortableScheduledTaskStartupIfNeeded(g_config.startWithWindows);
     }
     return 0;
 }
 
-void StartPortableStartupRepairThread() {
-    if (UseStoreStartupIntegration() || !g_config.startWithWindows) return;
-    HANDLE thread = CreateThread(NULL, 0, PortableStartupRepairThread, NULL, 0, NULL);
+void StartStartupRepairThread() {
+    if (!UseStoreStartupIntegration() && !g_config.startWithWindows) return;
+    HANDLE thread = CreateThread(NULL, 0, StartupRepairThread, NULL, 0, NULL);
     if (thread) CloseHandle(thread);
 }
 
 void LoadConfig(bool refreshStartupState = false) {
     DWORD value = 0;
-    if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"DayBrightness", &value)) {
-        g_config.dayBrightness = ClampInt(static_cast<int>(value), 0, 100);
+    DWORD dayValue = 0;
+    DWORD nightValue = 0;
+    DWORD initializationMarker = 0;
+    brightness_initialization::StoredState stored = {};
+    stored.hasDay =
+        ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"DayBrightness", &dayValue);
+    stored.dayBrightness = ClampInt(static_cast<int>(dayValue), 0, 100);
+    stored.hasNight =
+        ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"NightBrightness", &nightValue);
+    stored.nightBrightness = ClampInt(static_cast<int>(nightValue), 0, 100);
+    stored.markerSet =
+        ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"BrightnessDefaultsInitialized",
+                       &initializationMarker) &&
+        initializationMarker != 0;
+
+    int currentBrightness = 0;
+    bool needsCurrentBrightness =
+        !stored.markerSet && (!stored.hasDay || !stored.hasNight);
+    bool hasCurrentBrightness =
+        needsCurrentBrightness && ReadCurrentSdrBrightness(&currentBrightness);
+    brightness_initialization::Resolution brightnessResolution =
+        brightness_initialization::Resolve(stored, hasCurrentBrightness, currentBrightness);
+    g_brightnessConfigReady = brightnessResolution.ready;
+    if (brightnessResolution.ready) {
+        g_config.dayBrightness = brightnessResolution.dayBrightness;
+        g_config.nightBrightness = brightnessResolution.nightBrightness;
     }
-    if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"NightBrightness", &value)) {
-        g_config.nightBrightness = ClampInt(static_cast<int>(value), 0, 100);
+    if (brightnessResolution.writeDay) {
+        WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"DayBrightness",
+                        brightnessResolution.dayBrightness);
+    }
+    if (brightnessResolution.writeNight) {
+        WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"NightBrightness",
+                        brightnessResolution.nightBrightness);
+    }
+    if (brightnessResolution.writeMarker) {
+        WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"BrightnessDefaultsInitialized", 1);
     }
     if (ReadDwordValue(HKEY_CURRENT_USER, kConfigKey, L"FollowNightLight", &value)) {
         g_config.followNightLight = value != 0;
@@ -807,8 +843,11 @@ void LoadConfig(bool refreshStartupState = false) {
 }
 
 void SaveConfig() {
-    WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"DayBrightness", g_config.dayBrightness);
-    WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"NightBrightness", g_config.nightBrightness);
+    if (g_brightnessConfigReady) {
+        WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"DayBrightness", g_config.dayBrightness);
+        WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"NightBrightness", g_config.nightBrightness);
+        WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"BrightnessDefaultsInitialized", 1);
+    }
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"FollowNightLight", g_config.followNightLight ? 1 : 0);
     WriteDwordValue(HKEY_CURRENT_USER, kConfigKey, L"AutoRestoreManualChanges", g_config.autoRestoreManualChanges ? 1 : 0);
     if (IsSupportFeatureAvailable()) {
@@ -1069,6 +1108,10 @@ void ApplyCurrentBrightness(bool force) {
     if (g_settingsPreviewActive) return;
 
     LoadConfig();
+    if (!g_brightnessConfigReady) {
+        StopBrightnessTransition();
+        return;
+    }
     NightDecision decision = DecideNight();
     int brightness = decision.night ? g_config.nightBrightness : g_config.dayBrightness;
     UINT32 targetLevel = BrightnessPercentToSdrLevel(brightness);
@@ -1691,6 +1734,7 @@ void ApplySettingsFromWindow(HWND hwnd, bool closeWindow) {
     if (!ReadSettingsWindow(hwnd, &next)) return;
     ClearSettingsBrightnessPreview();
     g_config = next;
+    g_brightnessConfigReady = true;
     SaveConfig();
     PostMessageW(g_mainWindow, kApplyMessage, TRUE, 0);
     if (closeWindow) {
@@ -4623,6 +4667,7 @@ void ApplySettingsDraft(HWND hwnd, bool closeWindow) {
     std::wstring supporterCode = g_config.supporterCode;
     g_config = g_settingsDraft;
     g_config.supporterCode = supporterCode;
+    g_brightnessConfigReady = true;
     SaveConfig();
     RegisterAppHotkeys();
     PostMessageW(g_mainWindow, kApplyMessage, TRUE, 0);
@@ -5375,7 +5420,6 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
         return 0;
     case WM_TIMER:
         if (wParam == kRecheckTimer) {
-            night_mode::InvalidateActiveStateCache();
             ApplyCurrentBrightness(false);
             CheckWeeklySupportReminder();
             return 0;
@@ -5550,12 +5594,18 @@ bool CreateMainWindow() {
 }  // namespace
 
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int) {
+    ui_dpi::EnablePerMonitorV2();
     g_instance = instance;
     bool openSettingsOnLaunch = launch_mode::ShouldOpenSettingsOnLaunch();
     bool backgroundLaunch = !openSettingsOnLaunch;
     g_taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
 
     LoadConfig(false);
+
+    if (UseStoreStartupIntegration() && launch_mode::IsStoreFastStartupLaunch() &&
+        !startup_integration::ShouldRunStoreFastStartup()) {
+        return 0;
+    }
 
     HANDLE mutex = CreateMutexW(NULL, TRUE, L"Local\\OledHdrSdrSyncMutex");
     if (!mutex) {
@@ -5574,7 +5624,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int) {
         return 1;
     }
     RegisterAppHotkeys();
-    StartPortableStartupRepairThread();
+    StartStartupRepairThread();
     if (backgroundLaunch) {
         StartStoreLicenseCheckThread(g_mainWindow);
     }

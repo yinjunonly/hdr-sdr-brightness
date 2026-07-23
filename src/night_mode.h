@@ -23,7 +23,6 @@ struct Decision {
 };
 
 void InvalidateScheduleCache();
-void InvalidateActiveStateCache();
 bool CanFollowWindowsNightLight();
 bool IsFixedNightNow(const Schedule& schedule);
 Decision Decide(const Schedule& schedule);

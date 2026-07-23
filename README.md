@@ -23,20 +23,18 @@ Install from the [Microsoft Store](https://apps.microsoft.com/detail/9nksvcpjl35
 Use the Windows x64 package:
 
 ```text
-HdrSdrBrightness-1.1.0-win64.zip
+HdrSdrBrightness-1.1.3-win64.zip
 ```
 
 Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no installer, no service, and no administrator privileges are required.
 
-### What's New In 1.1.0
+### What's New In 1.1.3
 
-- Rebuilds the complete HDR screenshot capture and editor path in native C++, removing the bundled .NET runtime and substantially reducing the portable package size.
-- Keeps a native WGC/D3D11 capture server ready in the background for a faster shortcut-to-picker response without a visible console window.
-- Preserves full physical resolution through region selection, fullscreen preview, clipboard copy, and PNG save while keeping HDR tone mapping consistent.
-- Makes repeated region screenshot shortcuts replace the current screenshot; rapid requests are coalesced so only the newest picker remains.
-- Adds maximize/restore, pointer-centered mouse-wheel zoom from fit-to-window through 8x, and middle-button panning to fullscreen preview.
-- Restores the familiar toolbar icons, renders a true source-pixel mosaic brush, and keeps annotation dragging smooth with reusable native paint surfaces.
-- Keeps `Ctrl+Z` undo and `Ctrl+Y` redo, and improves portable startup readiness after Windows sign-in.
+- Fixes blurry settings text and controls on high-DPI and 4K displays by enabling Per-Monitor V2 scaling in both the startup path and the final executable manifest.
+- Initializes both Day and Night presets from the current Windows SDR content brightness on first run, avoiding an unexpected brightness jump.
+- Preserves every existing user's saved brightness presets. If the current value cannot be read safely, the app waits instead of applying the legacy 40%/25% placeholders.
+- Keeps the native HDR screenshot capture and editor Per-Monitor V2 aware and preserves full physical resolution through preview, clipboard copy, and PNG save.
+- Retains the faster single-toggle startup path in the Microsoft Store edition while keeping the standard Windows startup task as a fallback.
 
 ![HDR screenshot capture workflow](image/README/hdr-screenshot-1.0.10.png)
 
@@ -71,15 +69,15 @@ Small interactions are kept responsive and restrained: buttons and controls reac
 
 | Setting | Default |
 | --- | --- |
-| Day SDR content brightness | `40%` |
-| Night SDR content brightness | `25%` |
+| First-run Day preset | Current Windows SDR content brightness |
+| First-run Night preset | Current Windows SDR content brightness |
 | Switching mode | Follow Windows Night Light when available |
 | Fallback schedule | Night starts at `18:00`, day starts at `08:00` |
 | Restore manual changes | On |
 | Region screenshot hotkey | `Alt+S` |
 | Fullscreen screenshot hotkey | `Shift+Alt+S` |
 
-These values are only starting points. Tune them for your panel, room lighting, and preferred SDR white level.
+Existing saved presets are never overwritten. After first-run initialization, tune both values for your panel, room lighting, and preferred SDR white level.
 
 Early community feedback and reported SDR brightness ranges are collected in [docs/feedback.md](docs/feedback.md).
 
@@ -220,20 +218,18 @@ SDR white level
 Windows x64 用户下载：
 
 ```text
-HdrSdrBrightness-1.1.0-win64.zip
+HdrSdrBrightness-1.1.3-win64.zip
 ```
 
 解压后运行 `HdrSdrBrightness.exe`。这是便携程序：不需要安装，不创建服务，也不需要管理员权限。
 
-### 1.1.0 更新内容
+### 1.1.3 更新内容
 
-- 将完整的 HDR 截图捕获与编辑流程重写为原生 C++，移除随包分发的 .NET 运行时，显著缩小便携包体积。
-- 常驻预热原生 WGC/D3D11 捕获服务，缩短快捷键到取景框的等待时间，并且不再弹出命令行窗口。
-- 区域选择、全屏预览、剪贴板复制和 PNG 保存全程保持物理分辨率，HDR tone mapping 表现保持一致。
-- 连续按区域截图快捷键会替换当前截图；快速连按只保留最后一次请求，不再叠加多个取景框。
-- 全屏预览新增最大化/还原、以鼠标位置为中心的适应窗口至 8 倍滚轮缩放，以及鼠标中键拖动画面。
-- 恢复熟悉的工具栏图标，马赛克改为真正的源像素块，并通过复用原生绘图表面提升标注拖动流畅度。
-- 保留 `Ctrl+Z` 撤销和 `Ctrl+Y` 重做，并改善便携版在 Windows 登录后的自启动就绪速度。
+- 通过在启动路径和最终 EXE manifest 中启用 Per-Monitor V2，修复高 DPI 与 4K 显示器上的设置文字和控件发糊。
+- 首次运行时，白天和夜间预设都会从 Windows 当前 SDR 内容亮度初始化，避免应用启动后突然改变亮度。
+- 已有用户保存的亮度预设会原样保留；当前值无法安全读取时，应用会等待重试，不会套用旧的 40%/25% 占位值。
+- 原生 HDR 截图捕获器与编辑器继续使用 Per-Monitor V2，并在预览、剪贴板复制和 PNG 保存中保持完整物理分辨率。
+- Microsoft Store 版保留单开关快速自启动，同时继续使用标准 Windows 启动任务作为回退。
 
 ![HDR 截图捕获流程](image/README/hdr-screenshot-1.0.10-zh.png)
 
@@ -268,15 +264,15 @@ HDR SDR 亮度助手的设计目标是日常使用足够简单：打开后设置
 
 | 设置 | 默认值 |
 | --- | --- |
-| 白天 SDR 内容亮度 | `40%` |
-| 夜间 SDR 内容亮度 | `25%` |
+| 首次运行的白天预设 | Windows 当前 SDR 内容亮度 |
+| 首次运行的夜间预设 | Windows 当前 SDR 内容亮度 |
 | 切换方式 | 优先跟随 Windows 夜间模式 |
 | 默认时段 | `18:00` 进入夜间，`08:00` 进入白天 |
 | 自动纠正手动调整 | 开启 |
 | 区域截图快捷键 | `Alt+S` |
 | 全屏截图快捷键 | `Shift+Alt+S` |
 
-这些只是起点。你可以根据屏幕类型、房间光线和自己习惯的 SDR 白点继续调整。
+已有预设不会被覆盖。首次初始化后，请根据屏幕类型、房间光线和自己习惯的 SDR 白点继续调整。
 
 早期社区反馈和用户提到的 SDR 亮度范围整理在 [docs/feedback.md](docs/feedback.md)。
 

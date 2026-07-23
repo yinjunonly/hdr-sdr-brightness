@@ -193,10 +193,6 @@ void InvalidateScheduleCache() {
     g_manualScheduleCacheValid = false;
 }
 
-void InvalidateActiveStateCache() {
-    g_nightLightActiveCacheValid = false;
-}
-
 bool CanFollowWindowsNightLight() {
     MaybeBool schedule = GetNightLightSunsetScheduleCached();
     return schedule.known && schedule.value;
