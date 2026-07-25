@@ -2,11 +2,10 @@
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
-  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
   xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
   xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap uap3 uap10 desktop rescap">
+  IgnorableNamespaces="uap uap10 desktop rescap">
   <Identity
     Name="InjunaId.HDRSDRBrightnessAssistant"
     Publisher="CN=81C6B903-8D8C-435A-B42E-3678C731A484"
@@ -56,14 +55,6 @@
             Enabled="false"
             DisplayName="HDR SDR Brightness Assistant" />
         </desktop:Extension>
-        <uap3:Extension
-          Category="windows.appExecutionAlias"
-          Executable="HdrSdrBrightness.exe"
-          EntryPoint="Windows.FullTrustApplication">
-          <uap3:AppExecutionAlias>
-            <desktop:ExecutionAlias Alias="HdrSdrBrightnessStore.exe" />
-          </uap3:AppExecutionAlias>
-        </uap3:Extension>
       </Extensions>
     </Application>
   </Applications>

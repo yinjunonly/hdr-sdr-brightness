@@ -50,10 +50,10 @@ Invoke-Checked 'First-run brightness production wiring' {
 Invoke-Checked 'Store startup policy unit tests' {
     & (Join-Path $root 'startup_tests\build.ps1')
 }
-Invoke-Checked 'Store startup manifest alias' {
+Invoke-Checked 'Store startup manifest safety' {
     & (Join-Path $root 'startup_tests\store_manifest_alias_test.ps1')
 }
-Invoke-Checked 'Store fast startup wiring' {
+Invoke-Checked 'Startup persistence safety' {
     & (Join-Path $root 'startup_tests\store_fast_startup_wiring_test.ps1')
 }
 Invoke-Checked 'Per-Monitor V2 startup fallback' {

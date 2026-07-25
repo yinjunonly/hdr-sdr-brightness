@@ -734,16 +734,12 @@ bool TrySetStartupEnabled(bool enabled) {
 }
 
 static DWORD WINAPI StartupRepairThread(LPVOID) {
-    if (UseStoreStartupIntegration()) {
-        startup_integration::RepairStoreFastStartupIfNeeded();
-    } else {
-        startup_integration::RepairPortableScheduledTaskStartupIfNeeded(g_config.startWithWindows);
-    }
+    startup_integration::MigratePortableStartupIfNeeded(g_config.startWithWindows);
     return 0;
 }
 
 void StartStartupRepairThread() {
-    if (!UseStoreStartupIntegration() && !g_config.startWithWindows) return;
+    if (UseStoreStartupIntegration()) return;
     HANDLE thread = CreateThread(NULL, 0, StartupRepairThread, NULL, 0, NULL);
     if (thread) CloseHandle(thread);
 }
@@ -5601,11 +5597,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int) {
     g_taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
 
     LoadConfig(false);
-
-    if (UseStoreStartupIntegration() && launch_mode::IsStoreFastStartupLaunch() &&
-        !startup_integration::ShouldRunStoreFastStartup()) {
-        return 0;
-    }
 
     HANDLE mutex = CreateMutexW(NULL, TRUE, L"Local\\OledHdrSdrSyncMutex");
     if (!mutex) {

@@ -5,7 +5,6 @@
 namespace launch_mode {
 
 bool HasBackgroundLaunchArgument();
-bool IsStoreFastStartupLaunch();
 bool ShouldOpenSettingsOnLaunch();
 bool ShowSettingsInExistingInstance(UINT settingsCommandId);
 

@@ -23,13 +23,15 @@ Install from the [Microsoft Store](https://apps.microsoft.com/detail/9nksvcpjl35
 Use the Windows x64 package:
 
 ```text
-HdrSdrBrightness-1.1.3-win64.zip
+HdrSdrBrightness-1.1.4-win64.zip
 ```
 
 Extract the archive and run `HdrSdrBrightness.exe`. The app is portable: no installer, no service, and no administrator privileges are required.
 
-### What's New In 1.1.3
+### What's New In 1.1.4
 
+- Removes the custom fast-startup scheduled task from the Microsoft Store build and relies only on the Windows-managed StartupTask, preventing an incorrect Microsoft Defender persistence alert.
+- Changes portable startup to the standard current-user Run entry and automatically removes the legacy scheduled task.
 - Fixes blurry settings text and controls on high-DPI and 4K displays by enabling Per-Monitor V2 scaling in both the startup path and the final executable manifest.
 - Initializes both Day and Night presets from the current Windows SDR content brightness on first run, avoiding an unexpected brightness jump.
 - Preserves every existing user's saved brightness presets. If the current value cannot be read safely, the app waits instead of applying the legacy 40%/25% placeholders.
@@ -218,13 +220,15 @@ SDR white level
 Windows x64 用户下载：
 
 ```text
-HdrSdrBrightness-1.1.3-win64.zip
+HdrSdrBrightness-1.1.4-win64.zip
 ```
 
 解压后运行 `HdrSdrBrightness.exe`。这是便携程序：不需要安装，不创建服务，也不需要管理员权限。
 
-### 1.1.3 更新内容
+### 1.1.4 更新内容
 
+- Microsoft Store 版移除自定义快速启动计划任务，仅使用 Windows 管理的 StartupTask，避免 Microsoft Defender 错误报告持久化行为。
+- 便携版开机自启改用当前用户的标准 Run 项，并会自动移除旧版计划任务。
 - 通过在启动路径和最终 EXE manifest 中启用 Per-Monitor V2，修复高 DPI 与 4K 显示器上的设置文字和控件发糊。
 - 首次运行时，白天和夜间预设都会从 Windows 当前 SDR 内容亮度初始化，避免应用启动后突然改变亮度。
 - 已有用户保存的亮度预设会原样保留；当前值无法安全读取时，应用会等待重试，不会套用旧的 40%/25% 占位值。

@@ -15,10 +15,6 @@ bool IsBackgroundLaunchArgument(const wchar_t* arg) {
            lstrcmpiW(arg, L"/tray") == 0;
 }
 
-bool IsStoreFastStartupArgument(const wchar_t* arg) {
-    return arg && lstrcmpiW(arg, L"--store-fast-startup") == 0;
-}
-
 HWND FindExistingMainWindow() {
     HWND hwnd = FindWindowW(L"HdrSdrBrightnessMainWindow", NULL);
     if (!hwnd) {
@@ -47,23 +43,6 @@ bool HasBackgroundLaunchArgument() {
 
     LocalFree(argv);
     return background;
-}
-
-bool IsStoreFastStartupLaunch() {
-    int argc = 0;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (!argv) return false;
-
-    bool fastStartup = false;
-    for (int i = 1; i < argc; ++i) {
-        if (IsStoreFastStartupArgument(argv[i])) {
-            fastStartup = true;
-            break;
-        }
-    }
-
-    LocalFree(argv);
-    return fastStartup;
 }
 
 bool ShouldOpenSettingsOnLaunch() {
