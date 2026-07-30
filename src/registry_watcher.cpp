@@ -2,6 +2,10 @@
 
 #include "registry_watcher.h"
 
+#ifdef HSB_STORE_BUILD
+#include "store_registry_event_bridge.h"
+#endif
+
 #include <string>
 
 namespace registry_watcher {
@@ -16,11 +20,19 @@ struct WatchContext {
 
 DWORD WINAPI WatchThreadProc(LPVOID param) {
     WatchContext* context = static_cast<WatchContext*>(param);
+    const wchar_t* cloudStorePath =
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store";
     HKEY cloudKey = NULL;
     HKEY appKey = NULL;
-    RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store",
+    RegOpenKeyExW(HKEY_CURRENT_USER, cloudStorePath,
                   0, KEY_NOTIFY, &cloudKey);
     RegCreateKeyExW(HKEY_CURRENT_USER, context->appConfigKey.c_str(), 0, NULL, 0, KEY_NOTIFY, NULL, &appKey, NULL);
+
+#ifdef HSB_STORE_BUILD
+    store_registry_event_bridge::Subscription storeCloudEvents;
+    const bool storeCloudEventsStarted =
+        storeCloudEvents.Start(cloudStorePath);
+#endif
 
     HANDLE cloudEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     HANDLE appEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
@@ -43,10 +55,42 @@ DWORD WINAPI WatchThreadProc(LPVOID param) {
             RegNotifyChangeKeyValue(appKey, TRUE, REG_NOTIFY_CHANGE_NAME | REG_NOTIFY_CHANGE_LAST_SET, appEvent, TRUE);
         }
 
-        DWORD wait = WaitForMultipleObjects(3, events, FALSE, INFINITE);
-        if (wait == WAIT_OBJECT_0) break;
-        if (context->notifyWindow) {
-            PostMessageW(context->notifyWindow, context->notifyMessage, 0, 0);
+        bool changed = false;
+        while (!changed) {
+#ifdef HSB_STORE_BUILD
+            DWORD wait = WaitForMultipleObjects(3, events, FALSE, 0);
+            if (wait == WAIT_OBJECT_0) break;
+            if (wait == WAIT_OBJECT_0 + 1 ||
+                wait == WAIT_OBJECT_0 + 2) {
+                changed = true;
+                break;
+            }
+            if (storeCloudEventsStarted &&
+                storeCloudEvents.WaitForChange(250)) {
+                changed = true;
+                break;
+            }
+            if (!storeCloudEventsStarted) {
+                wait = WaitForMultipleObjects(3, events, FALSE, INFINITE);
+                if (wait == WAIT_OBJECT_0) break;
+                changed = wait == WAIT_OBJECT_0 + 1 ||
+                          wait == WAIT_OBJECT_0 + 2;
+            }
+#else
+            const DWORD wait =
+                WaitForMultipleObjects(3, events, FALSE, INFINITE);
+            if (wait == WAIT_OBJECT_0) break;
+            changed = wait == WAIT_OBJECT_0 + 1 ||
+                      wait == WAIT_OBJECT_0 + 2;
+#endif
+        }
+
+        if (WaitForSingleObject(context->stopEvent, 0) != WAIT_TIMEOUT) {
+            break;
+        }
+        if (changed && context->notifyWindow) {
+            PostMessageW(
+                context->notifyWindow, context->notifyMessage, 0, 0);
         }
     }
 
@@ -60,7 +104,7 @@ DWORD WINAPI WatchThreadProc(LPVOID param) {
 }  // namespace
 
 bool Start(Watcher* watcher, HWND notifyWindow, UINT notifyMessage, const wchar_t* appConfigKey) {
-    if (!watcher || watcher->thread) return false;
+    if (!watcher || watcher->thread || !notifyWindow) return false;
 
     HANDLE stopEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     if (!stopEvent) return false;

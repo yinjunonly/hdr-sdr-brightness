@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Version,
     [switch]$Clean,
+    [switch]$AllowDirtySource,
     [switch]$SkipBuild,
     [switch]$SkipUpload,
     [string]$AppxSymPath,
@@ -26,6 +27,11 @@ $uploadRoot = Join-Path $obj 'msix\upload'
 
 if ($Version -notmatch '^\d+\.\d+\.\d+$') {
     throw "Version must use MAJOR.MINOR.PATCH, for example 1.0.6"
+}
+
+& (Join-Path $root 'release-preflight.ps1') -AllowDirtySource:$AllowDirtySource
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
 }
 
 function Convert-ToMsixVersion {

@@ -5383,8 +5383,8 @@ void ShowSettingsWindow(HWND owner) {
     UpdateWindow(g_settingsWindow);
 }
 
-void StartRegistryThread() {
-    registry_watcher::Start(&g_registryWatcher, g_mainWindow, kRegistryChangedMessage, kConfigKey);
+void StartRegistryThread(HWND notifyWindow) {
+    registry_watcher::Start(&g_registryWatcher, notifyWindow, kRegistryChangedMessage, kConfigKey);
 }
 
 void StopRegistryThread() {
@@ -5401,7 +5401,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
     switch (message) {
     case WM_CREATE:
         AddTrayIcon(hwnd);
-        StartRegistryThread();
+        StartRegistryThread(hwnd);
         SetTimer(hwnd, kRecheckTimer, kRecheckMs, NULL);
         SetTimer(hwnd, kCaptureWarmupTimer, kCaptureWarmupMs, NULL);
         PostMessageW(hwnd, kApplyMessage, TRUE, 0);
@@ -5416,6 +5416,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
         return 0;
     case WM_TIMER:
         if (wParam == kRecheckTimer) {
+            night_mode::InvalidateActiveStateCache();
             ApplyCurrentBrightness(false);
             CheckWeeklySupportReminder();
             return 0;

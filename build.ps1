@@ -57,6 +57,9 @@ $sources = @(
     (Join-Path $root 'src\ui_window.cpp'),
     (Join-Path $root 'src\localization.cpp')
 )
+if ($Store) {
+    $sources += Join-Path $root 'src\store_registry_event_bridge.cpp'
+}
 $res = Join-Path $root 'res\app.rc'
 $resObj = Join-Path $obj 'app.res.o'
 $versionFile = Join-Path $root 'VERSION'
@@ -240,7 +243,8 @@ $versionHeaderContent = @"
         -lshell32 `
         -lgdi32 `
         -lgdiplus `
-        -ladvapi32
+        -ladvapi32 `
+        $(if ($Store) { @('-lole32', '-loleaut32', '-lwbemuuid') } else { @() })
 
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE

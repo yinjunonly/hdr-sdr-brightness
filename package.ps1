@@ -1,5 +1,6 @@
 param(
-    [string]$Version
+    [string]$Version,
+    [switch]$AllowDirtySource
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,6 +35,11 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 
 if ($Version -notmatch '^\d+\.\d+\.\d+$') {
     throw "Version must use MAJOR.MINOR.PATCH, for example 1.0.0"
+}
+
+& (Join-Path $root 'release-preflight.ps1') -AllowDirtySource:$AllowDirtySource
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
 }
 
 $zip = Join-Path $dist "HdrSdrBrightness-$Version-win64.zip"
