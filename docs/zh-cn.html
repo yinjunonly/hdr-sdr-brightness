@@ -19,6 +19,7 @@
   <meta name="twitter:description" content="开着 Windows HDR，也让 SDR 应用亮度更舒服。">
   <meta name="twitter:image" content="https://yinjunonly.github.io/hdr-sdr-brightness/assets/product/hdr-screenshot-comparison.png">
   <meta name="theme-color" content="#101417">
+  <link rel="icon" type="image/png" href="assets/app-logo-256.png">
   <style>
     :root {
       color-scheme: light dark;
@@ -76,11 +77,10 @@
     .mark {
       width: 32px;
       height: 32px;
-      border: 1px solid rgba(255, 255, 255, 0.25);
-      border-radius: 7px;
-      background: linear-gradient(135deg, #67d6a0, #77a7ff);
-      box-shadow: 0 12px 24px rgba(103, 214, 160, 0.2);
+      display: block;
       flex: 0 0 auto;
+      object-fit: contain;
+      filter: drop-shadow(0 8px 14px rgba(37, 195, 235, 0.2));
     }
 
     .links {
@@ -350,7 +350,7 @@
 <body>
   <header class="nav">
     <div class="brand">
-      <span class="mark" aria-hidden="true"></span>
+      <img class="mark" src="assets/app-logo-256.png" alt="" width="32" height="32">
       <span>HDR SDR 亮度助手</span>
     </div>
     <nav class="links" aria-label="主要导航">

@@ -17,7 +17,7 @@
   <meta name="twitter:description" content="Create a share-ready SDR PNG while Windows HDR stays enabled.">
   <meta name="twitter:image" content="https://yinjunonly.github.io/hdr-sdr-brightness/assets/product/hdr-screenshot-comparison.png">
   <meta name="theme-color" content="#101417">
-  <link rel="icon" href="data:,">
+  <link rel="icon" type="image/png" href="assets/app-logo-256.png">
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -143,11 +143,10 @@
     .mark {
       width: 32px;
       height: 32px;
+      display: block;
       flex: 0 0 auto;
-      border: 1px solid rgba(255, 255, 255, 0.25);
-      border-radius: 7px;
-      background: linear-gradient(135deg, var(--accent), var(--accent-2));
-      box-shadow: 0 12px 24px rgba(103, 214, 160, 0.2);
+      object-fit: contain;
+      filter: drop-shadow(0 8px 14px rgba(37, 195, 235, 0.2));
     }
 
     .links {
@@ -552,7 +551,7 @@
 <body>
   <header class="nav">
     <a class="brand" href="index.html" aria-label="HDR SDR Brightness Assistant home">
-      <span class="mark" aria-hidden="true"></span>
+      <img class="mark" src="assets/app-logo-256.png" alt="" width="32" height="32">
       <span>HDR SDR Brightness Assistant</span>
     </a>
     <nav class="links" aria-label="Primary">
