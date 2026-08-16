@@ -207,6 +207,25 @@
       margin: 0;
     }
 
+    .detail-link {
+      margin-top: 18px !important;
+    }
+
+    .detail-link a {
+      color: var(--accent);
+      text-decoration-color: rgba(103, 214, 160, 0.55);
+      text-underline-offset: 4px;
+    }
+
+    .detail-link a:hover {
+      text-decoration-color: currentColor;
+    }
+
+    .detail-link a:focus-visible {
+      outline: 3px solid var(--accent-2);
+      outline-offset: 4px;
+    }
+
     .grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -437,6 +456,7 @@
         <div>
           <h2>Share HDR screenshots without the washed-out look.</h2>
           <p>Regular screenshot tools can turn HDR content into a pale or overexposed image. Version 1.1 adds a faster native workflow, latest-request screenshot replacement, fullscreen maximize, pointer-centered wheel zoom up to 8x, and middle-button panning for precise annotations.</p>
+          <p class="detail-link"><a href="hdr-screenshot-washed-out.html">Why HDR screenshots look washed out — and how to share them as SDR PNGs</a></p>
         </div>
         <div class="image-frame">
           <img src="assets/product/hdr-preview-controls.png" alt="HDR screenshot preview and annotation controls">
