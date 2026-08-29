@@ -11,14 +11,14 @@ It is built for OLED, QD-OLED, MiniLED, HDR monitors, HDR TVs, and HDR laptop pa
 ![Clean, efficient, and intuitive light and dark interfaces](image/README/theme-adaptive-1.0.10.png)
 
 <p>
-  <a href="https://apps.microsoft.com/detail/9nksvcpjl35j">
+  <a href="https://apps.microsoft.com/detail/9nksvcpjl35j?cid=github-readme-en">
     <img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft" width="200">
   </a>
 </p>
 
 ### Download
 
-Install from the [Microsoft Store](https://apps.microsoft.com/detail/9nksvcpjl35j), or download the portable package from [GitHub Releases](https://github.com/yinjunonly/hdr-sdr-brightness/releases/latest).
+Choose the [Microsoft Store](https://apps.microsoft.com/detail/9nksvcpjl35j?cid=github-readme-en) for a full-feature trial, a one-time purchase with no subscription, automatic updates, and a way to support continued development. Or download the portable ZIP with the same core features from [GitHub Releases](https://github.com/yinjunonly/hdr-sdr-brightness/releases/latest) for free and update it manually.
 
 Use the Windows x64 package:
 
@@ -108,7 +108,7 @@ The tray menu includes Apply now, Capture HDR screenshot, Settings, Start with W
 The GitHub release ZIP is free. If this app improves your HDR setup, downloading from Microsoft Store supports continued development and includes automatic updates:
 
 ```text
-https://apps.microsoft.com/detail/9nksvcpjl35j?cid=github-readme
+https://apps.microsoft.com/detail/9nksvcpjl35j?cid=github-readme-en
 ```
 
 Both builds provide the same core features.
@@ -208,14 +208,14 @@ SDR white level
 ![简洁、高效、直观的浅色与深色界面](image/README/theme-adaptive-1.0.10-zh.png)
 
 <p>
-  <a href="https://apps.microsoft.com/detail/9nksvcpjl35j">
+  <a href="https://apps.microsoft.com/detail/9nksvcpjl35j?cid=github-readme-zh">
     <img src="https://get.microsoft.com/images/zh-cn%20dark.svg" alt="从 Microsoft 获取" width="200">
   </a>
 </p>
 
 ### 下载
 
-可以从 [Microsoft Store](https://apps.microsoft.com/detail/9nksvcpjl35j) 安装，也可以从 [GitHub Releases](https://github.com/yinjunonly/hdr-sdr-brightness/releases/latest) 下载便携版。
+选择 [Microsoft Store](https://apps.microsoft.com/detail/9nksvcpjl35j?cid=github-readme-zh)：可完整功能试用，一次购买、无订阅，自动更新，并支持后续开发；也可以从 [GitHub Releases](https://github.com/yinjunonly/hdr-sdr-brightness/releases/latest) 免费下载核心功能相同的便携 ZIP，但需要手动更新。
 
 Windows x64 用户下载：
 
@@ -305,7 +305,7 @@ https://apps.microsoft.com/detail/9n7f2sm5d1lr?hl=zh-CN&gl=US
 GitHub Release ZIP 是免费的。如果这个工具帮到了你，从 Microsoft Store 下载可以支持后续开发，并获得自动更新：
 
 ```text
-https://apps.microsoft.com/detail/9nksvcpjl35j?cid=github-readme
+https://apps.microsoft.com/detail/9nksvcpjl35j?cid=github-readme-zh
 ```
 
 两个版本提供相同的核心功能。
